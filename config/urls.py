@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.urls import path, include
-from apps.accounts.urls import urlpatterns as accounts_urls
+from apps.accounts.apis.urls import urlpatterns as accounts_urls
 
 urlpatterns = [
     path('admin/', admin.site.urls),

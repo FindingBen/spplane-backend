@@ -97,6 +97,15 @@ DATABASES = {
         'PORT': os.environ['DATABASE_PORT'],}
 }
 
+# Celery Configuration
+CELERY_BROKER_URL = 'redis://localhost:6381/0'  # or 'amqp://guest:guest@localhost//'
+CELERY_RESULT_BACKEND = 'redis://localhost:6381/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -117,6 +126,15 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
+CELERY_TIMEZONE = 'Europe/Copenhagen'
+CELERY_TASK_TRACK_STARTED = True
+CELERY_IMPORTS = ("accounts.tasks")
+CELERY_BROKER_URL = os.environ.get('REDIS_URL')
+CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL')
+CELERY_CACHE_BACKEND = 'default'
+CELERY_ENABLE_UTC = False
+# CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 
@@ -127,8 +145,14 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
+DEFAULT_FROM_EMAIL = 'support@sendperplane.com'
 
-
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.privateemail.com'
+EMAIL_USE_TLS = True
+EMAIL_PORT = 587
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 

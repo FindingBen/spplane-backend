@@ -4,24 +4,15 @@ from apps.accounts.models import User, AuthProvider
 
 
 class RegisterSerializer(serializers.Serializer):
+    USER_TYPE_CHOICES = ["regular", "shopify"]
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
-    user_type = serializers.CharField()
-
-    def create(self, validated_data):
-        user = User.objects.create_user(
-            email=validated_data["email"],
-            password=validated_data["password"],
-            user_type=validated_data["user_type"]
-        )
-
-        AuthProvider.objects.create(
-            user=user,
-            provider="email",
-            provider_user_id=user.email
-        )
-
-        return user
+    user_type = user_type = serializers.ChoiceField(choices=USER_TYPE_CHOICES)
+    
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Email already registered")
+        return value
     
 class CustomTokenSerializer(TokenObtainPairSerializer):
     username_field = "email"
