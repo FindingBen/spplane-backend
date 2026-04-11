@@ -1,0 +1,11 @@
+[MASTER]
+load-plugins=pylint_django
+
+[PYLINT_DJANGO]
+django-settings-module=config.settings
+
+[MESSAGES CONTROL]
+disable=
+    no-member,
+    missing-docstring,
+    too-few-public-methods,

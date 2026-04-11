@@ -2,6 +2,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from .serializers import RegisterSerializer, CustomTokenSerializer
 from apps.accounts.models import EmailVerification
 from apps.accounts.service import AccountService, EmailVerificationService
@@ -38,7 +39,17 @@ class VerifyEmailView(APIView):
         except EmailVerification.DoesNotExist:
             return Response({"error": "Invalid token"}, status=400)
 
-        
+
+class GetUserInfoView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        user = request.user
+        return Response({
+            "id": str(user.id),
+            "email": user.email,
+            "user_type": user.user_type
+        }, status=200)
+
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenSerializer

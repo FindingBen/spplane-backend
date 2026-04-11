@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework.exceptions import AuthenticationFailed
 from apps.accounts.models import User, AuthProvider
+
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -19,7 +21,11 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
 
     def validate(self, attrs):
         data = super().validate(attrs)
+        user = self.user
 
+        if not user.is_active:
+            raise AuthenticationFailed("Email not verified")
+        
         data["user"] = {
             "id": str(self.user.id),
             "email": self.user.email,

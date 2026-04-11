@@ -5,7 +5,7 @@ from django.core.mail import send_mail
 
 @shared_task
 def send_verification_email_task(token, email):
-    verification_url = f"http://spplane.app/verify-email/{token}"
+    verification_url = f"http://localhost:5173/verify-email/{token}"
 
     send_mail(
         subject="Verify your account",

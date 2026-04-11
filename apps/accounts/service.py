@@ -13,6 +13,7 @@ class AccountService:
         user = User.objects.create_user(
             email=email,
             password=password,
+            is_active=False,
             user_type=user_type
         )
 
