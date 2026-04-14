@@ -36,10 +36,10 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
 
-    "apps.accounts",
-    "apps.contacts",
-    "apps.content",
-    "apps.campaign",
+    "apps.accounts.apps.AccountsConfig",
+    "apps.contacts.apps.ContactsConfig",
+    "apps.content.apps.ContentConfig",
+    "apps.campaign.apps.CampaignConfig",
 ]
 
 MIDDLEWARE = [

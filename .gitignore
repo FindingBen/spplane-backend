@@ -4,3 +4,4 @@
 start_celery.bat
 start_migration.bat
 start_server.bat
+scaffold_api.py

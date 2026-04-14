@@ -4,7 +4,7 @@ from .views import TemplateViewSet, ContentViewSet
 
 router = DefaultRouter()
 router.register(r'templates', TemplateViewSet, basename='template')
-router.register(r'content', ContentViewSet, basename='content')
+router.register(r'v1', ContentViewSet, basename='content')
 
 urlpatterns = [
     path('', include(router.urls)),

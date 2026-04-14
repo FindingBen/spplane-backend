@@ -5,5 +5,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/accounts/', include('apps.accounts.apis.urls')),
     path('api/content/', include('apps.content.apis.urls')),
-    # path('api/campaign/', include('apps.campaign.apis.urls'))
+    path('api/campaign/', include('apps.campaign.apis.urls')),
+    path('api/contacts/', include('apps.contacts.apis.urls')),
 ]
