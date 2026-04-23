@@ -7,4 +7,5 @@ urlpatterns = [
     path('api/content/', include('apps.content.apis.urls')),
     path('api/campaign/', include('apps.campaign.apis.urls')),
     path('api/contacts/', include('apps.contacts.apis.urls')),
+    path('api/sms/', include('apps.sms.apis.urls')),
 ]

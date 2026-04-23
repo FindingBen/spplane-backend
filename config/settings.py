@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "apps.contacts.apps.ContactsConfig",
     "apps.content.apps.ContentConfig",
     "apps.campaign.apps.CampaignConfig",
+    "apps.sms.apps.SmsConfig",
 ]
 
 MIDDLEWARE = [
