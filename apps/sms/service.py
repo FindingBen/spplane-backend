@@ -1,4 +1,5 @@
 import uuid
+from django.db import transaction
 from apps.sms.models import SmsEvent
 from apps.sms.models import SmsRecipient
 from apps.sms.models import SmsPageAction
@@ -55,7 +56,11 @@ class SmsService:
         if 'has_cta_links' in sms_data:
             create_data['has_cta_links'] = sms_data.get('has_cta_links')
 
-        sms = Sms.objects.create(**create_data)
+        with transaction.atomic():
+            sms = Sms.objects.create(**create_data)
+            campaign = create_data.get('campaign')
+            if campaign is not None and campaign.content is not None:
+                SmsPageService._create_page_with_actions(sms, campaign.content)
 
         return sms
 
@@ -102,71 +107,46 @@ class SmsService:
 
 
 class SmsPageService:
-    @staticmethod
-    def create_sms_page(sms_page_data, user=None):
-        create_data = {}
-
-        if 'sms' in sms_page_data:
-            create_data['sms'] = sms_page_data.get('sms')
-
-        if 'source_content' in sms_page_data:
-            create_data['source_content'] = sms_page_data.get('source_content')
-
-        if 'public_slug' in sms_page_data:
-            create_data['public_slug'] = sms_page_data.get('public_slug')
-
-        if 'page_status' in sms_page_data:
-            create_data['page_status'] = sms_page_data.get('page_status')
-
-        if 'content_snapshot' in sms_page_data:
-            create_data['content_snapshot'] = sms_page_data.get('content_snapshot')
-
-        if 'snapshot_version' in sms_page_data:
-            create_data['snapshot_version'] = sms_page_data.get('snapshot_version')
-
-        if 'requires_token' in sms_page_data:
-            create_data['requires_token'] = sms_page_data.get('requires_token')
-
-        if 'published_at' in sms_page_data:
-            create_data['published_at'] = sms_page_data.get('published_at')
-
-        if 'expires_at' in sms_page_data:
-            create_data['expires_at'] = sms_page_data.get('expires_at')
-
-        sms_page = SmsPage.objects.create(**create_data)
-
-        return sms_page
+    ACTION_COMPONENT_TYPES = {
+        'cta': 'url',
+        'form': 'form_submit',
+        'video': 'video',
+    }
 
     @staticmethod
-    def get_all_sms_pages():
-        return SmsPage.objects.all()
+    def _generate_public_slug():
+        while True:
+            candidate = uuid.uuid4().hex[:16]
+            if not SmsPage.objects.filter(public_slug=candidate).exists():
+                return candidate
 
     @staticmethod
-    def update_sms_page(sms_page, sms_page_data, user=None):
-        if 'sms' in sms_page_data:
-            sms_page.sms = sms_page_data.get('sms')
-        if 'source_content' in sms_page_data:
-            sms_page.source_content = sms_page_data.get('source_content')
-        if 'public_slug' in sms_page_data:
-            sms_page.public_slug = sms_page_data.get('public_slug')
-        if 'page_status' in sms_page_data:
-            sms_page.page_status = sms_page_data.get('page_status')
-        if 'content_snapshot' in sms_page_data:
-            sms_page.content_snapshot = sms_page_data.get('content_snapshot')
-        if 'snapshot_version' in sms_page_data:
-            sms_page.snapshot_version = sms_page_data.get('snapshot_version')
-        if 'requires_token' in sms_page_data:
-            sms_page.requires_token = sms_page_data.get('requires_token')
-        if 'published_at' in sms_page_data:
-            sms_page.published_at = sms_page_data.get('published_at')
-        if 'expires_at' in sms_page_data:
-            sms_page.expires_at = sms_page_data.get('expires_at')
-        sms_page.save()
-        return sms_page
-
-    @staticmethod
-    def delete_sms_page(sms_page, user=None):
-        sms_page.delete()
+    def _create_page_with_actions(sms, content):
+        page = SmsPage.objects.create(
+            sms=sms,
+            source_content=content,
+            public_slug=SmsPageService._generate_public_slug(),
+            content_snapshot=content.structure,
+        )
+        components = content.structure.get('components', [])
+        actions = []
+        for position, component in enumerate(components):
+            comp_type = component.get('type')
+            if comp_type not in SmsPageService.ACTION_COMPONENT_TYPES:
+                continue
+            props = component.get('props', {})
+            actions.append(SmsPageAction(
+                page=page,
+                action_key=component.get('id') or f'{comp_type}_{position}',
+                label=props.get('label', comp_type),
+                action_type=SmsPageService.ACTION_COMPONENT_TYPES[comp_type],
+                target_url=props.get('url', props.get('href', '')),
+                target_value=props.get('value', ''),
+                position=position,
+            ))
+        if actions:
+            SmsPageAction.objects.bulk_create(actions)
+        return page
 
 
 class SmsPageActionService:

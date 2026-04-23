@@ -70,17 +70,10 @@ class SmsPageViewSet(viewsets.ModelViewSet):
         return SmsPageService.get_all_sms_pages()
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            sms_page = SmsPageService.create_sms_page(serializer.validated_data, request.user)
-        except ValidationError as error:
-            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
-
-        output_serializer = self.get_serializer(sms_page)
-        headers = self.get_success_headers(output_serializer.data)
-        return Response(output_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        return Response(
+            {'detail': 'SMS pages are created automatically when an SMS is created.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
@@ -115,17 +108,10 @@ class SmsPageActionViewSet(viewsets.ModelViewSet):
         return SmsPageActionService.get_all_sms_page_actions()
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        try:
-            sms_page_action = SmsPageActionService.create_sms_page_action(serializer.validated_data, request.user)
-        except ValidationError as error:
-            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
-
-        output_serializer = self.get_serializer(sms_page_action)
-        headers = self.get_success_headers(output_serializer.data)
-        return Response(output_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        return Response(
+            {'detail': 'SMS page actions are created automatically when an SMS is created.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
