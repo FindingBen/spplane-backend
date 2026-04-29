@@ -53,3 +53,15 @@ class GetUserInfoView(APIView):
 
 class LoginView(TokenObtainPairView):
     serializer_class = CustomTokenSerializer
+
+class WallerViewset(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        wallet = user.wallet
+        return Response({
+            "balance": wallet.balance,
+            "reserved": wallet.reserved,
+            "updated_at": wallet.updated_at
+        }, status=200)

@@ -11,11 +11,12 @@ class CampaignService:
         :param user: User instance who is creating the campaign
         :return: Campaign instance
         """
+        content = campaign_data.get('content') or campaign_data.get('content_id')
         campaign = Campaign.objects.create(
             user=user,
             name=campaign_data.get('name'),
             description=campaign_data.get('description', ''),
-            content_id=campaign_data.get('content_id')
+            content=content,
         )
         return campaign
     
@@ -43,7 +44,9 @@ class CampaignService:
         campaign.name = campaign_data.get('name', campaign.name)
         campaign.description = campaign_data.get('description', campaign.description)
         if 'content' in campaign_data:
-            campaign.content_id = campaign_data.get('content')
+            campaign.content = campaign_data.get('content')
+        elif 'content_id' in campaign_data:
+            campaign.content_id = campaign_data.get('content_id')
         campaign.status = campaign_data.get('status', campaign.status)
         campaign.save()
         return campaign

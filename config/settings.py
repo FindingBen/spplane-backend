@@ -3,6 +3,8 @@ import dotenv
 from pathlib import Path
 from datetime import timedelta
 
+from decimal import Decimal, ROUND_HALF_UP
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv_file = os.path.join(BASE_DIR, ".env")
 if os.path.isfile(dotenv_file):
@@ -18,7 +20,11 @@ SECRET_KEY = 'django-insecure--pj+d$0sb6ggcnvu$g=njc2-%_d1shfrec7!+63j2$14*kszmj
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    ".ngrok-free.app",
+]
 
 
 AUTH_USER_MODEL = "accounts.User"
@@ -53,6 +59,14 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Backward-compatible env lookup while standardizing on FRONTEND_URL.
+FRONTEND_URL = os.environ.get('FRONTEND_URL') or os.environ.get('FRONTED_URL') or 'http://localhost:3000'
+
+CREDIT_RATE = Decimal("100")
+
+VONAGE_ID = os.environ.get('VONAGE_ID')
+VONAGE_TOKEN = os.environ.get('VONAGE_TOKEN')
 
 ROOT_URLCONF = 'config.urls'
 

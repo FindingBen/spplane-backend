@@ -59,8 +59,19 @@ class SmsService:
         with transaction.atomic():
             sms = Sms.objects.create(**create_data)
             campaign = create_data.get('campaign')
-            if campaign is not None and campaign.content is not None:
-                SmsPageService._create_page_with_actions(sms, campaign.content)
+            if campaign is not None:
+                campaign_with_content = (
+                    campaign.__class__.objects
+                    .select_related('content')
+                    .filter(id=campaign.id)
+                    .first()
+                )
+                if campaign_with_content is not None and campaign_with_content.content is not None:
+                    SmsPageService._create_page_with_actions(sms, campaign_with_content.content)
+                else:
+                    raise ValidationError(
+                        "Selected campaign has no linked content. Attach content to the campaign first."
+                    )
 
         return sms
 

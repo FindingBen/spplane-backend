@@ -39,3 +39,34 @@ class SmsEventSerializer(serializers.ModelSerializer):
         model = SmsEvent
         fields = ['id', 'sms', 'recipient', 'page_action', 'event_type', 'component_key', 'metadata', 'occurred_at', 'created_at']
         read_only_fields = ['id', 'created_at']
+
+
+class SmsPublicPageSerializer(serializers.ModelSerializer):
+    actions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SmsPage
+        fields = [
+            'public_slug',
+            'content_snapshot',
+            'snapshot_version',
+            'requires_token',
+            'published_at',
+            'expires_at',
+            'actions',
+        ]
+
+    def get_actions(self, obj):
+        # Return a curated list of actions for the public page consumer
+        actions_qs = obj.actions.order_by('position').all()
+        return [
+            {
+                'action_key': a.action_key,
+                'label': a.label,
+                'action_type': a.action_type,
+                'target_url': a.target_url,
+                'target_value': a.target_value,
+                'position': a.position,
+            }
+            for a in actions_qs
+        ]
