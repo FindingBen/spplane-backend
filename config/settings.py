@@ -68,6 +68,14 @@ CREDIT_RATE = Decimal("100")
 VONAGE_ID = os.environ.get('VONAGE_ID')
 VONAGE_TOKEN = os.environ.get('VONAGE_TOKEN')
 
+SHOPIFY_API_KEY = os.environ.get('SHOPIFY_API_KEY', '')
+SHOPIFY_API_SECRET = os.environ.get('SHOPIFY_API_SECRET', '')
+SHOPIFY_SCOPES = os.environ.get('SHOPIFY_SCOPES', 'read_customers,write_customers')
+SHOPIFY_REDIRECT_URI = os.environ.get('SHOPIFY_REDIRECT_URI', '')
+SHOPIFY_API_VERSION = os.environ.get('SHOPIFY_API_VERSION', '2025-01')
+SHOPIFY_APP_URL = os.environ.get('SHOPIFY_APP_URL', '')
+
+
 ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
@@ -87,6 +95,7 @@ TEMPLATES = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
+        "apps.accounts.authentication.ShopifyAuthentication",
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
 }
