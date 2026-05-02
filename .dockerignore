@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+env/
+venv/
+.venv/
+
+# Environment files — never bake secrets into the image
+.env
+.env.*
+
+# Local dev scripts (Windows batch files)
+*.bat
+
+# Django
+db.sqlite3
+*.sqlite3
+/staticfiles/
+/media/
+
+# Editor and OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
