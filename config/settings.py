@@ -128,14 +128,17 @@ DATABASES = {
 }
 
 # Celery Configuration
-CELERY_BROKER_URL = 'redis://localhost:6381/0'  # or 'amqp://guest:guest@localhost//'
-CELERY_RESULT_BACKEND = 'redis://localhost:6381/0'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'UTC'
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
+CELERY_TIMEZONE = 'Europe/Copenhagen'
+CELERY_ENABLE_UTC = False
+CELERY_CACHE_BACKEND = 'default'
+CELERY_IMPORTS = ("apps.sms.tasks", "apps.accounts.tasks")
+CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
@@ -158,11 +161,6 @@ AUTH_PASSWORD_VALIDATORS = [
 
 CELERY_TIMEZONE = 'Europe/Copenhagen'
 CELERY_TASK_TRACK_STARTED = True
-CELERY_IMPORTS = ("accounts.tasks")
-CELERY_BROKER_URL = os.environ.get('REDIS_URL')
-CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL')
-CELERY_CACHE_BACKEND = 'default'
-CELERY_ENABLE_UTC = False
 # CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # Internationalization
