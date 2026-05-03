@@ -1,9 +1,17 @@
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
 from apps.sms.apis.views import VonageDeliveryWebhookView
 from apps.accounts.apis.views import ShopifyOAuthInitView, ShopifyOAuthCallbackView
 
+
+def health_check(request):
+    return JsonResponse({"status": "ok"})
+
+
 urlpatterns = [
+    path('', health_check),
+    path('health/', health_check),
     path('admin/', admin.site.urls),
     path('api/accounts/', include('apps.accounts.apis.urls')),
     path('api/content/', include('apps.content.apis.urls')),
