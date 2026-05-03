@@ -62,7 +62,7 @@ MIDDLEWARE = [
 ]
 
 # Backward-compatible env lookup while standardizing on FRONTEND_URL.
-FRONTEND_URL = os.environ.get('FRONTEND_URL') or os.environ.get('FRONTED_URL') or 'http://localhost:3000'
+FRONTEND_URL = os.environ.get('FRONTEND_URL') or os.environ.get('FRONTEND_URL') or 'http://localhost:3000'
 
 CREDIT_RATE = Decimal("100")
 
