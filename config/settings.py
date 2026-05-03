@@ -137,8 +137,8 @@ CELERY_TIMEZONE = 'Europe/Copenhagen'
 CELERY_ENABLE_UTC = False
 CELERY_CACHE_BACKEND = 'default'
 CELERY_IMPORTS = ("apps.sms.tasks", "apps.accounts.tasks")
-CELERY_BROKER_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_BROKER_URL = os.environ.get('REDIS_URL')
+CELERY_RESULT_BACKEND = os.environ.get('REDIS_URL')
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
