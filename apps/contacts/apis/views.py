@@ -1,12 +1,13 @@
 from apps.contacts.service import ContactService
 from .serializers import ContactSerializer
 from django.core.exceptions import ValidationError
+from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.contacts.service import ContactListService
 from .serializers import ContactListSerializer
-from django.shortcuts import render
 
 
 
@@ -54,13 +55,25 @@ class ContactListViewSet(viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=['delete'], url_path=r'members/(?P<contact_id>[^/.]+)')
+    def remove_member(self, request, pk=None, contact_id=None):
+        contact_list = self.get_object()
+        contact = get_object_or_404(ContactService.get_all_contacts(request.user), pk=contact_id)
+
+        try:
+            ContactListService.remove_contact_membership(contact_list, contact, request.user)
+        except ValidationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class ContactViewSet(viewsets.ModelViewSet):
     serializer_class = ContactSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return ContactService.get_all_contacts()
+        return ContactService.get_all_contacts(self.request.user)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

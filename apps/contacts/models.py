@@ -29,7 +29,7 @@ class Contact(models.Model):
     ]
 
     unique_id = models.UUIDField(default=uuid4, unique=True, editable=False)
-    contact_list = models.ForeignKey(ContactList, on_delete=models.CASCADE, related_name='contacts')
+    users = models.ForeignKey(User, on_delete=models.CASCADE, related_name='contacts')
     phone = models.CharField(max_length=20)              # E.164 format: +12025551234
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
@@ -41,9 +41,26 @@ class Contact(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [('contact_list', 'phone')]
+        constraints = [
+            models.UniqueConstraint(fields=['users', 'phone'], name='unique_contact_phone_per_user')
+        ]
         indexes = [
             models.Index(fields=['phone']),
-            models.Index(fields=['contact_list', 'status']),
-            models.Index(fields=['contact_list', 'created_at']),
+            models.Index(fields=['users', 'status']),
+            models.Index(fields=['users', 'created_at']),
+        ]
+
+
+class SegmentMembership(models.Model):
+    contact_list = models.ForeignKey(ContactList, on_delete=models.CASCADE, related_name='memberships')
+    contact = models.ForeignKey(Contact, on_delete=models.CASCADE, related_name='segment_memberships')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['contact_list', 'contact'], name='unique_contact_per_segment')
+        ]
+        indexes = [
+            models.Index(fields=['contact_list']),
+            models.Index(fields=['contact']),
         ]
