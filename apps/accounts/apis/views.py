@@ -141,14 +141,28 @@ class ShopifyOAuthCallbackView(APIView):
                     len(failed), shop, failed,
                 )
 
-        refresh = RefreshToken.for_user(user)
         frontend_url = settings.FRONTEND_URL.rstrip("/")
-        redirect_url = (
-            f"{frontend_url}/register"
-            f"?shop={shop}"
-            f"&token={str(refresh.access_token)}"
-            f"&refresh={str(refresh)}"
-        )
+
+        # New install or user has no password set → send to set-password page
+        if created or not user.has_usable_password():
+            from apps.accounts.shopify_service import generate_setup_token
+            setup_token = generate_setup_token(shop, user.email)
+            redirect_url = (
+                f"{frontend_url}/set-password"
+                f"?setup_token={setup_token}"
+                f"&email={user.email}"
+                f"&shop={shop}"
+            )
+        else:
+            # Returning user with password → issue JWT and go to dashboard
+            refresh = RefreshToken.for_user(user)
+            redirect_url = (
+                f"{frontend_url}/dashboard"
+                f"?shop={shop}"
+                f"&token={str(refresh.access_token)}"
+                f"&refresh={str(refresh)}"
+            )
+
         return redirect(redirect_url)
 
 
@@ -180,6 +194,73 @@ class ShopifyAuthLookupView(APIView):
             "token": str(refresh.access_token),
             "refresh": str(refresh),
             "shop": shop,
+            "user": {
+                "id": str(user.id),
+                "email": user.email,
+                "user_type": user.user_type,
+            },
+        }, status=status.HTTP_200_OK)
+
+
+class ShopifyCompleteSetupView(APIView):
+    """
+    POST /accounts/shopify/complete-setup/
+
+    Verifies the short-lived setup token issued after OAuth, sets the user's
+    password, and returns a full JWT so the frontend can log them in.
+
+    Body: { "setup_token": "...", "password": "..." }
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from django.core import signing
+        from apps.accounts.shopify_service import verify_setup_token
+        from apps.accounts.models import User
+
+        setup_token = request.data.get("setup_token", "").strip()
+        password = request.data.get("password", "").strip()
+
+        if not setup_token or not password:
+            return Response(
+                {"error": "setup_token and password are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(password) < 8:
+            return Response(
+                {"error": "Password must be at least 8 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payload = verify_setup_token(setup_token)
+        except signing.SignatureExpired:
+            return Response(
+                {"error": "Setup link has expired. Please reinstall the app."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except signing.BadSignature:
+            return Response(
+                {"error": "Invalid setup token."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user = User.objects.get(email=payload["email"])
+        except User.DoesNotExist:
+            return Response(
+                {"error": "User not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user.set_password(password)
+        user.save(update_fields=["password"])
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            "token": str(refresh.access_token),
+            "refresh": str(refresh),
             "user": {
                 "id": str(user.id),
                 "email": user.email,

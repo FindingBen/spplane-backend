@@ -4,9 +4,32 @@ import logging
 
 import requests
 from django.conf import settings
+from django.core import signing
 from django.db import transaction
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Shopify setup token — short-lived signed token for the set-password flow.
+# Uses Django's signing module (HMAC with SECRET_KEY, no DB needed).
+# ---------------------------------------------------------------------------
+
+SETUP_TOKEN_SALT = "shopify-setup-token"
+SETUP_TOKEN_MAX_AGE = 600  # 10 minutes
+
+
+def generate_setup_token(shop: str, email: str) -> str:
+    """Returns a signed token encoding {shop, email}, valid for 10 minutes."""
+    return signing.dumps({"shop": shop, "email": email}, salt=SETUP_TOKEN_SALT)
+
+
+def verify_setup_token(token: str) -> dict:
+    """
+    Verifies and decodes a setup token.
+    Returns {"shop": ..., "email": ...} on success.
+    Raises signing.SignatureExpired or signing.BadSignature on failure.
+    """
+    return signing.loads(token, salt=SETUP_TOKEN_SALT, max_age=SETUP_TOKEN_MAX_AGE)
 
 
 # ---------------------------------------------------------------------------

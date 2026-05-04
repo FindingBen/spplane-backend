@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     RegisterView, LoginView, VerifyEmailView, GetUserInfoView, WallerViewset,
     ShopifyOAuthInitView, ShopifyOAuthCallbackView, ShopifyAuthLookupView,
+    ShopifyCompleteSetupView,
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -17,4 +18,5 @@ urlpatterns = [
     path("shopify/oauth/", ShopifyOAuthInitView.as_view()),
     path("shopify/callback/", ShopifyOAuthCallbackView.as_view()),
     path("shopify/auth/", ShopifyAuthLookupView.as_view()),
+    path("shopify/complete-setup/", ShopifyCompleteSetupView.as_view()),
 ]
