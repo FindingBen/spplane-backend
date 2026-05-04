@@ -3,6 +3,7 @@ import dotenv
 from pathlib import Path
 from datetime import timedelta
 
+
 from decimal import Decimal, ROUND_HALF_UP
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -183,7 +184,22 @@ if _origins_env:
     CORS_ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(',') if o.strip()]
 else:
     CORS_ALLOWED_ORIGINS = []
+
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = ["accept",
+                                              "accept-encoding",
+                                              "authorization",
+                                              "content-type",
+                                              "dnt",
+                                              "users",
+                                              "origin",
+                                              "user-agent",
+                                              "x-csrftoken",
+                                              "options",
+                                              "x-requested-with",
+                                              "shopify-domain"]
+
 EMAIL_HOST = 'smtp.privateemail.com'
 EMAIL_USE_TLS = True
 EMAIL_PORT = 587
