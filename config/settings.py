@@ -177,11 +177,12 @@ DEFAULT_FROM_EMAIL = 'support@sendperplane.com'
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
-# CORS Configuration
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-]
+
+_origins_env = os.environ.get('ORIGINS', '')
+if _origins_env:
+    CORS_ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(',') if o.strip()]
+else:
+    CORS_ALLOWED_ORIGINS = []
 CORS_ALLOW_CREDENTIALS = True
 EMAIL_HOST = 'smtp.privateemail.com'
 EMAIL_USE_TLS = True
