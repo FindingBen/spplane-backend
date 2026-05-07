@@ -1,11 +1,12 @@
 import logging
 import uuid
+from dataclasses import dataclass
 
+from pydantic import ValidationError as PydanticValidationError
 import requests
 from vonage import Vonage, Auth
 from vonage_messages.models import Sms as SmsMessagePayload
 from vonage_http_client.errors import HttpRequestError
-from dataclasses import dataclass
 
 from django.conf import settings
 from django.core.cache import cache
@@ -50,15 +51,53 @@ class VonageProvider:
         auth = Auth(api_key=api_key, api_secret=api_secret)
         self._vonage = Vonage(auth=auth)
 
-    def send(self, from_: str, to: str, text: str, client_ref: str = "") -> SendResult:
-        message = SmsMessagePayload(
-            to=to,
-            from_=from_,
-            text=text,
-            client_ref=client_ref or None,
-        )
+    @staticmethod
+    def _normalize_msisdn(value: str, *, field_name: str) -> str:
+        import phonenumbers
+
+        candidate = (value or "").strip()
+        if not candidate:
+            raise ValueError(f"{field_name} is required.")
+
+        if candidate.isdigit():
+            if candidate.startswith("0") or not 7 <= len(candidate) <= 15:
+                raise ValueError(f"{field_name} must be a valid E.164 phone number.")
+            return candidate
 
         try:
+            parsed = phonenumbers.parse(candidate, None)
+        except phonenumbers.NumberParseException as exc:
+            raise ValueError(f"{field_name} must be a valid E.164 phone number.") from exc
+
+        if not phonenumbers.is_possible_number(parsed) or not phonenumbers.is_valid_number(parsed):
+            raise ValueError(f"{field_name} must be a valid E.164 phone number.")
+
+        return phonenumbers.format_number(
+            parsed,
+            phonenumbers.PhoneNumberFormat.E164,
+        ).lstrip("+")
+
+    @classmethod
+    def _normalize_sender(cls, value: str) -> str:
+        candidate = (value or "").strip()
+        if not candidate:
+            raise ValueError("Sender is required.")
+
+        if any(character.isalpha() for character in candidate):
+            return candidate
+
+        return cls._normalize_msisdn(candidate, field_name="Sender")
+
+    def send(self, from_: str, to: str, text: str, client_ref: str = "") -> SendResult:
+        try:
+            normalized_to = self._normalize_msisdn(to, field_name="Recipient phone")
+            normalized_from = self._normalize_sender(from_)
+            message = SmsMessagePayload(
+                to=normalized_to,
+                from_=normalized_from,
+                text=text,
+                client_ref=client_ref or None,
+            )
             response = self._vonage.messages.send(message)
             return SendResult(
                 success=True,
@@ -66,6 +105,16 @@ class VonageProvider:
                 error_code="",
                 error_message="",
                 is_permanent_failure=False,
+            )
+
+        except (ValueError, PydanticValidationError) as exc:
+            logger.warning("Vonage payload validation failed for %s: %s", to, exc)
+            return SendResult(
+                success=False,
+                provider_message_id="",
+                error_code="validation_error",
+                error_message=str(exc),
+                is_permanent_failure=True,
             )
 
         except HttpRequestError as exc:
