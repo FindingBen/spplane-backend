@@ -96,7 +96,7 @@ class ShopifyProfile(models.Model):
 
     shop_name = models.CharField(max_length=255, blank=True)
     email = models.EmailField(blank=True)
-
+    first_time_import_customers = models.BooleanField(default=False)
     installed_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

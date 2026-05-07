@@ -6,7 +6,6 @@ query getCustomers($first: Int!, $after: String, $query: String, $reverse: Boole
         id
         firstName
         lastName
-        email
         phone
         createdAt
         updatedAt

@@ -25,10 +25,9 @@ class ShopifyCustomerLink(models.Model):
 
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
-    email_snapshot = models.EmailField(blank=True)
     phone_snapshot = models.CharField(max_length=20, blank=True)
     marketing_state = models.CharField(max_length=32, blank=True)
-
+    email_snapshot = models.EmailField(blank=True)
     imported_at = models.DateTimeField(null=True, blank=True)
     last_synced_at = models.DateTimeField(null=True, blank=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -48,7 +47,6 @@ class ShopifyCustomerLink(models.Model):
         indexes = [
             models.Index(fields=["shopify_profile", "shopify_customer_id"]),
             models.Index(fields=["contact"]),
-            models.Index(fields=["email_snapshot"]),
             models.Index(fields=["phone_snapshot"]),
         ]
 

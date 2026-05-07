@@ -1,7 +1,25 @@
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework.exceptions import AuthenticationFailed
-from apps.accounts.models import User, AuthProvider
+from apps.accounts.models import ShopifyProfile, User
+
+
+def build_user_payload(user, *, shopify_profile=None):
+    if shopify_profile is None:
+        shopify_profile = ShopifyProfile.objects.filter(user=user).only(
+            "shop_domain",
+            "first_time_import_customers",
+        ).first()
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "user_type": user.user_type,
+        "shop_domain": shopify_profile.shop_domain if shopify_profile is not None else "",
+        "first_time_import_customers": (
+            shopify_profile.first_time_import_customers if shopify_profile is not None else False
+        ),
+    }
 
 
 
@@ -26,10 +44,6 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
         if not user.is_active:
             raise AuthenticationFailed("Email not verified")
         
-        data["user"] = {
-            "id": str(self.user.id),
-            "email": self.user.email,
-            "user_type": self.user.user_type,
-        }
+        data["user"] = build_user_payload(self.user)
 
         return data

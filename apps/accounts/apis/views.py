@@ -7,11 +7,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from .serializers import RegisterSerializer, CustomTokenSerializer
+from .serializers import RegisterSerializer, CustomTokenSerializer, build_user_payload
 from apps.accounts.models import EmailVerification
 from apps.accounts.service import AccountService, EmailVerificationService
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 logger = logging.getLogger(__name__)
 
@@ -23,24 +23,14 @@ class RegisterView(APIView):
         if serializer.is_valid():
             user = AccountService.register_user(**serializer.validated_data)
 
-            refresh = RefreshToken.for_user(user)
-
-            return Response({
-                "user": {
-                    "id": str(user.id),
-                    "email": user.email,
-                    "user_type": user.user_type
-                },
-                # "access": str(refresh.access_token),
-                # "refresh": str(refresh)
-            }, status=201)
+            return Response({"user": build_user_payload(user)}, status=201)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class VerifyEmailView(APIView):
-    def get(self, request, token):
+    def get(self, _request, token):
         try:
-            verification = EmailVerificationService.verify_email(token)
+            EmailVerificationService.verify_email(token)
             return Response({"message": "Email verified successfully"}, status=200)
         except EmailVerification.DoesNotExist:
             return Response({"error": "Invalid token"}, status=400)
@@ -50,11 +40,7 @@ class GetUserInfoView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request):
         user = request.user
-        return Response({
-            "id": str(user.id),
-            "email": user.email,
-            "user_type": user.user_type
-        }, status=200)
+        return Response(build_user_payload(user), status=200)
 
 
 class LoginView(TokenObtainPairView):
@@ -194,11 +180,7 @@ class ShopifyAuthLookupView(APIView):
             "token": str(refresh.access_token),
             "refresh": str(refresh),
             "shop": shop,
-            "user": {
-                "id": str(user.id),
-                "email": user.email,
-                "user_type": user.user_type,
-            },
+            "user": build_user_payload(user, shopify_profile=profile),
         }, status=status.HTTP_200_OK)
 
 
@@ -261,9 +243,5 @@ class ShopifyCompleteSetupView(APIView):
         return Response({
             "token": str(refresh.access_token),
             "refresh": str(refresh),
-            "user": {
-                "id": str(user.id),
-                "email": user.email,
-                "user_type": user.user_type,
-            },
+            "user": build_user_payload(user),
         }, status=status.HTTP_200_OK)

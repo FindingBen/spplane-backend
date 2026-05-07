@@ -2,11 +2,10 @@ import logging
 
 import requests
 from django.conf import settings
-from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.contacts.service import ContactService
+from apps.contacts.models import Contact
 from apps.shopify.models import ShopifyCustomerLink
 from apps.shopify.queries import GET_CUSTOMERS_QUERY
 
@@ -15,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 class ShopifyGraphQLError(Exception):
     """Raised when Shopify GraphQL returns HTTP or top-level GraphQL errors."""
+
+
+class ShopifyCustomerImportStateError(Exception):
+    """Raised when the local shop import state disallows another import."""
 
 
 class ShopifyGraphQLClient:
@@ -144,7 +147,6 @@ class ShopifyCustomerService:
             "id": customer.get("id"),
             "first_name": customer.get("firstName") or "",
             "last_name": customer.get("lastName") or "",
-            "email": customer.get("email") or "",
             "phone": customer.get("phone") or "",
             "marketing_state": default_phone.get("marketingState") or "NONE",
             "created_at": customer.get("createdAt"),
@@ -152,131 +154,316 @@ class ShopifyCustomerService:
         }
 
     @staticmethod
+    def _sanitize_customer(customer: dict) -> dict:
+        sanitized_customer = dict(customer)
+        sanitized_customer.pop("email", None)
+        return sanitized_customer
+
+    @staticmethod
     def import_customers(
         shopify_profile,
         *,
         user,
-        customers: list[dict],
-        segment_ids: list[int] | None = None,
-        contact_list: int | None = None,
     ) -> dict:
         """
-        Imports selected Shopify customers into local contacts and links them
-        back to ShopifyCustomerLink rows for future sync/webhook matching.
+        Imports the merchant's full Shopify customer catalog into local
+        contacts and ShopifyCustomerLink rows.
         """
-        results = []
-
-        for customer in customers:
-            result = ShopifyCustomerService._import_single_customer(
-                shopify_profile=shopify_profile,
-                user=user,
-                customer=customer,
-                segment_ids=segment_ids,
-                contact_list=contact_list,
+        if shopify_profile.first_time_import_customers:
+            raise ShopifyCustomerImportStateError(
+                "Customers can be imported only once. Contact support for more info."
             )
-            results.append(result)
 
-        summary = {
-            "requested": len(customers),
-            "imported": sum(1 for item in results if item["status"] == "imported"),
-            "skipped": sum(1 for item in results if item["status"] == "skipped"),
-            "failed": sum(1 for item in results if item["status"] == "failed"),
-        }
+        customers = ShopifyCustomerService._fetch_all_customers(shopify_profile)
+        return ShopifyCustomerService._import_fetched_customers(
+            shopify_profile=shopify_profile,
+            user=user,
+            customers=customers,
+        )
+
+    @staticmethod
+    def _fetch_all_customers(
+        shopify_profile,
+        *,
+        page_size: int = 250,
+    ) -> list[dict]:
+        customers: list[dict] = []
+        cursor: str | None = None
+
+        while True:
+            payload = ShopifyCustomerService.fetch_customers(
+                shopify_profile,
+                cursor=cursor,
+                first=page_size,
+            )
+            customers.extend(
+                ShopifyCustomerService._sanitize_customer(customer)
+                for customer in payload.get("customers", [])
+            )
+
+            page_info = payload.get("page_info", {})
+            next_cursor = page_info.get("end_cursor")
+            if not page_info.get("has_next_page") or not next_cursor or next_cursor == cursor:
+                break
+
+            cursor = next_cursor
+
+        return customers
+
+    @staticmethod
+    def _build_contact_attributes(
+        customer: dict,
+        shopify_profile,
+        *,
+        existing_custom_attributes: dict | None = None,
+    ) -> dict:
+        custom_attributes = dict(existing_custom_attributes or {})
+        custom_attributes.pop("email", None)
+        custom_attributes.update(
+            {
+                "shopify_customer_id": customer.get("id", ""),
+                "shop_domain": shopify_profile.shop_domain,
+            }
+        )
 
         return {
-            "summary": summary,
-            "results": results,
+            "first_name": customer.get("first_name", ""),
+            "last_name": customer.get("last_name", ""),
+            "status": "subscribed",
+            "source": "shopify",
+            "custom_attributes": custom_attributes,
+        }
+
+    @staticmethod
+    def _upsert_contacts(
+        *,
+        shopify_profile,
+        user,
+        customers: list[dict],
+        timestamp,
+    ) -> tuple[dict[str, Contact], dict]:
+        customer_by_phone: dict[str, dict] = {}
+        for customer in customers:
+            phone = customer.get("phone") or ""
+            if phone:
+                customer_by_phone[phone] = customer
+
+        if not customer_by_phone:
+            return {}, {"created": 0, "updated": 0}
+
+        phones = list(customer_by_phone)
+        existing_contacts = {
+            contact.phone: contact
+            for contact in Contact.objects.filter(users=user, phone__in=phones)
+        }
+
+        contacts_to_create = []
+        contacts_to_update = []
+
+        for phone, customer in customer_by_phone.items():
+            existing_contact = existing_contacts.get(phone)
+            contact_attributes = ShopifyCustomerService._build_contact_attributes(
+                customer,
+                shopify_profile,
+                existing_custom_attributes=(
+                    existing_contact.custom_attributes if existing_contact is not None else None
+                ),
+            )
+
+            if existing_contact is None:
+                contacts_to_create.append(
+                    Contact(
+                        users=user,
+                        phone=phone,
+                        first_name=contact_attributes["first_name"],
+                        last_name=contact_attributes["last_name"],
+                        status=contact_attributes["status"],
+                        source=contact_attributes["source"],
+                        custom_attributes=contact_attributes["custom_attributes"],
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                )
+                continue
+
+            existing_contact.first_name = contact_attributes["first_name"]
+            existing_contact.last_name = contact_attributes["last_name"]
+            existing_contact.status = contact_attributes["status"]
+            existing_contact.source = contact_attributes["source"]
+            existing_contact.custom_attributes = contact_attributes["custom_attributes"]
+            existing_contact.updated_at = timestamp
+            contacts_to_update.append(existing_contact)
+
+        if contacts_to_create:
+            Contact.objects.bulk_create(contacts_to_create, batch_size=500)
+
+        if contacts_to_update:
+            Contact.objects.bulk_update(
+                contacts_to_update,
+                ["first_name", "last_name", "status", "source", "custom_attributes", "updated_at"],
+                batch_size=500,
+            )
+
+        contacts_by_phone = {
+            contact.phone: contact
+            for contact in Contact.objects.filter(users=user, phone__in=phones)
+        }
+        return contacts_by_phone, {
+            "created": len(contacts_to_create),
+            "updated": len(contacts_to_update),
         }
 
     @staticmethod
     @transaction.atomic
-    def _import_single_customer(
+    def _import_fetched_customers(
         *,
         shopify_profile,
         user,
-        customer: dict,
-        segment_ids: list[int] | None = None,
-        contact_list: int | None = None,
+        customers: list[dict],
     ) -> dict:
-        shopify_customer_id = customer.get("id")
-        phone = customer.get("phone") or ""
+        timestamp = timezone.now()
+        sanitized_customers = [
+            ShopifyCustomerService._sanitize_customer(customer) for customer in customers
+        ]
+        valid_customers = [customer for customer in sanitized_customers if customer.get("id")]
 
-        if not shopify_customer_id:
-            return {
-                "status": "failed",
-                "shopify_customer_id": "",
-                "reason": "Customer id is required.",
-            }
-
-        if not phone:
-            return {
-                "status": "skipped",
-                "shopify_customer_id": shopify_customer_id,
-                "reason": "Customer has no phone number.",
-            }
-
-        try:
-            contact = ContactService.create_contact(
-                {
-                    "phone": phone,
-                    "first_name": customer.get("first_name", ""),
-                    "last_name": customer.get("last_name", ""),
-                    "source": "shopify",
-                    "status": "subscribed",
-                    "custom_attributes": {
-                        "email": customer.get("email", ""),
-                        "shopify_customer_id": shopify_customer_id,
-                        "shop_domain": shopify_profile.shop_domain,
-                    },
-                    "segment_ids": segment_ids or [],
-                    "contact_list": contact_list,
-                },
-                user=user,
-            )
-        except ValidationError as exc:
-            logger.exception(
-                "ShopifyCustomerService: failed to import customer %s for %s",
-                shopify_customer_id,
-                shopify_profile.shop_domain,
-            )
-            return {
-                "status": "failed",
-                "shopify_customer_id": shopify_customer_id,
-                "reason": str(exc),
-            }
-
-        link, created = ShopifyCustomerLink.objects.get_or_create(
+        contacts_by_phone, contact_stats = ShopifyCustomerService._upsert_contacts(
             shopify_profile=shopify_profile,
-            shopify_customer_id=shopify_customer_id,
-            defaults={
-                "contact": contact,
-                "first_name": customer.get("first_name", ""),
-                "last_name": customer.get("last_name", ""),
-                "email_snapshot": customer.get("email", ""),
-                "phone_snapshot": phone,
-                "marketing_state": customer.get("marketing_state", "NONE"),
-                "imported_at": timezone.now(),
-                "last_synced_at": timezone.now(),
-                "raw_payload": customer,
-            },
+            user=user,
+            customers=valid_customers,
+            timestamp=timestamp,
         )
 
-        if not created:
-            link.contact = contact
-            link.first_name = customer.get("first_name", "")
-            link.last_name = customer.get("last_name", "")
-            link.email_snapshot = customer.get("email", "")
-            link.phone_snapshot = phone
-            link.marketing_state = customer.get("marketing_state", "NONE")
-            link.last_synced_at = timezone.now()
-            link.raw_payload = customer
-            if link.imported_at is None:
-                link.imported_at = timezone.now()
-            link.save()
+        customer_ids = [customer["id"] for customer in valid_customers]
+        existing_links = {
+            link.shopify_customer_id: link
+            for link in ShopifyCustomerLink.objects.filter(
+                shopify_profile=shopify_profile,
+                shopify_customer_id__in=customer_ids,
+            ).select_related("contact")
+        }
+
+        links_to_create = []
+        links_to_update = []
+        results = []
+
+        imported_count = 0
+        skipped_count = 0
+        failed_count = 0
+
+        for customer in sanitized_customers:
+            shopify_customer_id = customer.get("id")
+            if not shopify_customer_id:
+                failed_count += 1
+                results.append(
+                    {
+                        "status": "failed",
+                        "shopify_customer_id": "",
+                        "reason": "Customer id is required.",
+                    }
+                )
+                continue
+
+            phone = customer.get("phone") or ""
+            contact = contacts_by_phone.get(phone) if phone else None
+            existing_link = existing_links.get(shopify_customer_id)
+            link_contact = contact if contact is not None else (existing_link.contact if existing_link else None)
+
+            if existing_link is None:
+                links_to_create.append(
+                    ShopifyCustomerLink(
+                        shopify_profile=shopify_profile,
+                        shopify_customer_id=shopify_customer_id,
+                        contact=link_contact,
+                        first_name=customer.get("first_name", ""),
+                        last_name=customer.get("last_name", ""),
+                        phone_snapshot=phone,
+                        marketing_state=customer.get("marketing_state", "NONE"),
+                        imported_at=timestamp if contact is not None else None,
+                        last_synced_at=timestamp,
+                        deleted_at=None,
+                        raw_payload=customer,
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                )
+                created_link = True
+            else:
+                existing_link.contact = link_contact
+                existing_link.first_name = customer.get("first_name", "")
+                existing_link.last_name = customer.get("last_name", "")
+                existing_link.phone_snapshot = phone
+                existing_link.marketing_state = customer.get("marketing_state", "NONE")
+                existing_link.last_synced_at = timestamp
+                existing_link.deleted_at = None
+                existing_link.raw_payload = customer
+                existing_link.updated_at = timestamp
+                if contact is not None and existing_link.imported_at is None:
+                    existing_link.imported_at = timestamp
+                links_to_update.append(existing_link)
+                created_link = False
+
+            if contact is None:
+                skipped_count += 1
+                results.append(
+                    {
+                        "status": "skipped",
+                        "shopify_customer_id": shopify_customer_id,
+                        "reason": "Customer has no phone number.",
+                        "created_link": created_link,
+                    }
+                )
+                continue
+
+            imported_count += 1
+            results.append(
+                {
+                    "status": "imported",
+                    "shopify_customer_id": shopify_customer_id,
+                    "contact_id": contact.id,
+                    "created_link": created_link,
+                }
+            )
+
+        if links_to_create:
+            ShopifyCustomerLink.objects.bulk_create(links_to_create, batch_size=500)
+
+        if links_to_update:
+            ShopifyCustomerLink.objects.bulk_update(
+                links_to_update,
+                [
+                    "contact",
+                    "first_name",
+                    "last_name",
+                    "phone_snapshot",
+                    "marketing_state",
+                    "imported_at",
+                    "last_synced_at",
+                    "deleted_at",
+                    "raw_payload",
+                    "updated_at",
+                ],
+                batch_size=500,
+            )
+
+        summary = {
+            "requested": len(sanitized_customers),
+            "fetched": len(sanitized_customers),
+            "imported": imported_count,
+            "skipped": skipped_count,
+            "failed": failed_count,
+            "contacts_created": contact_stats["created"],
+            "contacts_updated": contact_stats["updated"],
+            "links_created": len(links_to_create),
+            "links_updated": len(links_to_update),
+        }
+
+        if failed_count == 0 and not shopify_profile.first_time_import_customers:
+            shopify_profile.first_time_import_customers = True
+            shopify_profile.save(update_fields=["first_time_import_customers"])
 
         return {
-            "status": "imported",
-            "shopify_customer_id": shopify_customer_id,
-            "contact_id": contact.id,
-            "created_link": created,
+            "first_time_import_customers": shopify_profile.first_time_import_customers,
+            "summary": summary,
+            "results": results,
         }
