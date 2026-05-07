@@ -4,6 +4,7 @@ from rest_framework.test import APIClient
 from django.urls import reverse
 
 from apps.accounts.models import User
+from apps.contacts.models import Contact, ContactList, SegmentMembership
 from apps.sms.models import Sms, SmsPage, SmsRecipient, SmsEvent
 
 
@@ -79,3 +80,46 @@ class PublicSmsPageTests(TestCase):
 		self.recipient.refresh_from_db()
 		self.assertIsNotNone(self.recipient.page_opened_at)
 		self.assertTrue(SmsEvent.objects.filter(recipient=self.recipient, event_type='page_view').exists())
+
+
+class SmsEstimateCostTests(TestCase):
+	def setUp(self):
+		self.client = APIClient()
+		self.user = User.objects.create_user(
+			email='merchant@example.com',
+			password='pass12345',
+			user_type='regular',
+			is_active=True,
+		)
+		self.client.force_authenticate(user=self.user)
+
+		self.contact_list = ContactList.objects.create(
+			users=self.user,
+			segment_name='VIP Customers',
+		)
+		self.contact = Contact.objects.create(
+			users=self.user,
+			phone='+12025550123',
+			first_name='Ada',
+			status='subscribed',
+		)
+		SegmentMembership.objects.create(
+			contact_list=self.contact_list,
+			contact=self.contact,
+		)
+		self.sms = Sms.objects.create(
+			user=self.user,
+			contact_list=self.contact_list,
+			tracking_id='track_estimate',
+			sender='SENDER',
+			body='Hello Ada',
+			status='draft',
+		)
+
+	def test_estimate_cost_uses_segment_membership_contacts(self):
+		response = self.client.get(f'/api/sms/v1/{self.sms.id}/estimate-cost/')
+
+		self.assertEqual(response.status_code, 200)
+		payload = response.json()
+		self.assertEqual(payload['recipients'], 1)
+		self.assertEqual(payload['details'][0]['phone'], '+12025550123')

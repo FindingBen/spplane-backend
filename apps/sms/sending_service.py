@@ -328,8 +328,12 @@ class SmsSendingService:
 
         return (
             Contact.objects
-            .filter(contact_list=sms.contact_list, status="subscribed")
+            .filter(
+                segment_memberships__contact_list=sms.contact_list,
+                status="subscribed",
+            )
             .only("id", "phone", "first_name")
+            .distinct()
         )
 
     def _build_recipients(self, sms, contacts) -> list[str]:
