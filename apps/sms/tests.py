@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -8,7 +8,7 @@ from django.urls import reverse
 from apps.accounts.models import User
 from apps.contacts.models import Contact, ContactList, SegmentMembership
 from apps.sms.models import Sms, SmsPage, SmsRecipient, SmsEvent
-from apps.sms.sending_service import VonageProvider
+from apps.sms.sending_service import VonageProvider, SmsSendingService
 
 
 class PublicSmsPageTests(TestCase):
@@ -130,6 +130,26 @@ class SmsEstimateCostTests(TestCase):
         payload = response.json()
         self.assertEqual(payload['recipients'], 1)
         self.assertEqual(payload['details'][0]['phone'], '+12025550123')
+
+
+class SmsSendingServiceTests(TestCase):
+    @override_settings(FRONTEND_URL='https://frontend.example.com/')
+    def test_render_body_uses_sms_page_route_for_hosted_pages(self):
+        service = SmsSendingService.__new__(SmsSendingService)
+
+        body = service.render_body(
+            template='Hello {{first_name}}\n{{page_link}}',
+            first_name='Ada',
+            page_slug='publicslug1',
+            access_token='token123',
+        )
+
+        self.assertIn('Hello Ada', body)
+        self.assertIn(
+            'https://frontend.example.com/sms/page/publicslug1?t=token123',
+            body,
+        )
+        self.assertNotIn('/p/publicslug1?t=token123', body)
 
 
 class VonageProviderTests(TestCase):

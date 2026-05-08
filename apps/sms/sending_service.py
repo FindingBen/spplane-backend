@@ -350,7 +350,7 @@ class SmsSendingService:
         body = template.replace("{{first_name}}", first_name or "")
 
         if page_slug:
-            page_url = f"{frontend_url}/p/{page_slug}?t={access_token}"
+            page_url = f"{frontend_url}/sms/page/{page_slug}?t={access_token}"
             if "{{page_link}}" in body:
                 body = body.replace("{{page_link}}", page_url)
             else:
