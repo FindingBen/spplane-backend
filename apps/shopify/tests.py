@@ -1,11 +1,18 @@
+from decimal import Decimal
 from unittest.mock import patch
 
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIClient
 
 from apps.accounts.models import ShopifyProfile, User
 from apps.contacts.models import Contact
-from apps.shopify.models import ShopifyCustomerLink
+from apps.shopify.models import (
+    ShopifyCustomerLink,
+    ShopifyProduct,
+    ShopifyProductMedia,
+    ShopifyProductVariant,
+)
 from apps.shopify.service import ShopifyCustomerService
 
 
@@ -169,3 +176,364 @@ class ShopifyCustomerImportViewTests(TestCase):
         self.assertEqual(import_response.status_code, 200)
         self.assertEqual(me_after_response.status_code, 200)
         self.assertTrue(me_after_response.json()["first_time_import_customers"])
+
+
+class ShopifyCatalogModelTests(TestCase):
+    def setUp(self):
+        self.primary_user = User.objects.create_user(
+            email="primary-merchant@example.com",
+            password="password123",
+            user_type="shopify",
+            is_active=True,
+        )
+        self.secondary_user = User.objects.create_user(
+            email="secondary-merchant@example.com",
+            password="password123",
+            user_type="shopify",
+            is_active=True,
+        )
+        self.primary_profile = ShopifyProfile.objects.create(
+            user=self.primary_user,
+            shop_domain="primary.myshopify.com",
+            access_token="primary-token",
+        )
+        self.secondary_profile = ShopifyProfile.objects.create(
+            user=self.secondary_user,
+            shop_domain="secondary.myshopify.com",
+            access_token="secondary-token",
+        )
+
+    def test_catalog_models_store_product_variant_and_media_projection(self):
+        product = ShopifyProduct.objects.create(
+            shopify_profile=self.primary_profile,
+            shopify_product_id="gid://shopify/Product/1",
+            title="Hero Product",
+            handle="hero-product",
+            description_html="<p>Hero product description</p>",
+            status="ACTIVE",
+            tags=["featured", "summer"],
+            seo_title="Hero Product SEO",
+            seo_description="Hero product SEO description",
+            featured_image_url="https://cdn.example.com/product.jpg",
+            total_inventory=12,
+            has_out_of_stock_variants=False,
+            is_gift_card=False,
+            variant_count=1,
+            media_count=2,
+        )
+        media = ShopifyProductMedia.objects.create(
+            product=product,
+            shopify_media_id="gid://shopify/MediaImage/1",
+            media_type="image",
+            alt_text="Hero product image",
+            source_url="https://cdn.example.com/product.jpg",
+            preview_image_url="https://cdn.example.com/product-preview.jpg",
+            position=1,
+            width=1200,
+            height=1200,
+        )
+        variant = ShopifyProductVariant.objects.create(
+            product=product,
+            shopify_variant_id="gid://shopify/ProductVariant/1",
+            title="Default Title",
+            sku="HP-001",
+            price_amount=Decimal("19.99"),
+            inventory_quantity=12,
+            position=1,
+            shopify_image_id="gid://shopify/ImageSource/1",
+            featured_image_url="https://cdn.example.com/product.jpg",
+        )
+
+        self.assertEqual(product.variants.count(), 1)
+        self.assertEqual(product.media.count(), 1)
+        self.assertEqual(product.media.first(), media)
+        self.assertEqual(product.variants.first(), variant)
+
+    def test_product_ids_are_unique_per_shopify_profile(self):
+        ShopifyProduct.objects.create(
+            shopify_profile=self.primary_profile,
+            shopify_product_id="gid://shopify/Product/100",
+            title="Primary Product",
+        )
+        ShopifyProduct.objects.create(
+            shopify_profile=self.secondary_profile,
+            shopify_product_id="gid://shopify/Product/100",
+            title="Secondary Product",
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ShopifyProduct.objects.create(
+                    shopify_profile=self.primary_profile,
+                    shopify_product_id="gid://shopify/Product/100",
+                    title="Duplicate Product",
+                )
+
+    def test_variant_and_media_ids_are_unique_within_product(self):
+        product = ShopifyProduct.objects.create(
+            shopify_profile=self.primary_profile,
+            shopify_product_id="gid://shopify/Product/200",
+            title="Variant Product",
+        )
+        ShopifyProductVariant.objects.create(
+            product=product,
+            shopify_variant_id="gid://shopify/ProductVariant/200",
+            title="Red",
+        )
+        ShopifyProductMedia.objects.create(
+            product=product,
+            shopify_media_id="gid://shopify/MediaImage/200",
+            media_type="image",
+            source_url="https://cdn.example.com/red.jpg",
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ShopifyProductVariant.objects.create(
+                    product=product,
+                    shopify_variant_id="gid://shopify/ProductVariant/200",
+                    title="Duplicate Red",
+                )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ShopifyProductMedia.objects.create(
+                    product=product,
+                    shopify_media_id="gid://shopify/MediaImage/200",
+                    media_type="image",
+                    source_url="https://cdn.example.com/red-duplicate.jpg",
+                )
+
+
+class ShopifyProductImportViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="catalog-merchant@example.com",
+            password="password123",
+            user_type="shopify",
+            is_active=True,
+        )
+        self.shopify_profile = ShopifyProfile.objects.create(
+            user=self.user,
+            shop_domain="catalog.myshopify.com",
+            access_token="catalog-token",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user)
+
+    @staticmethod
+    def _product_payload(product_id, *, title, handle, variant_id, media_id, image_url, price, inventory_quantity):
+        return {
+            "id": f"gid://shopify/Product/{product_id}",
+            "title": title,
+            "descriptionHtml": f"<p>{title} description</p>",
+            "handle": handle,
+            "status": "ACTIVE",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-02T00:00:00Z",
+            "hasOutOfStockVariants": inventory_quantity <= 0,
+            "isGiftCard": False,
+            "publishedAt": "2026-01-03T00:00:00Z",
+            "tags": ["featured", "summer"],
+            "totalInventory": inventory_quantity,
+            "seo": {
+                "title": f"{title} SEO",
+                "description": f"{title} SEO description",
+            },
+            "variantsCount": {"count": 1, "precision": "EXACT"},
+            "variants": {
+                "edges": [
+                    {
+                        "node": {
+                            "id": f"gid://shopify/ProductVariant/{variant_id}",
+                            "title": "Default Title",
+                            "sku": f"SKU-{variant_id}",
+                            "price": price,
+                            "inventoryQuantity": inventory_quantity,
+                            "image": {
+                                "id": f"gid://shopify/ImageSource/{variant_id}",
+                                "url": image_url,
+                                "altText": f"{title} image",
+                            },
+                        }
+                    }
+                ]
+            },
+            "media": {
+                "edges": [
+                    {
+                        "node": {
+                            "mediaContentType": "IMAGE",
+                            "id": f"gid://shopify/MediaImage/{media_id}",
+                            "alt": f"{title} media",
+                            "image": {
+                                "id": f"gid://shopify/ImageSource/{media_id}",
+                                "url": image_url,
+                                "altText": f"{title} media",
+                                "width": 1200,
+                                "height": 1200,
+                            },
+                        }
+                    }
+                ]
+            },
+        }
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_products_import_endpoint_imports_catalog_across_pages(self, execute_mock):
+        execute_mock.side_effect = [
+            {
+                "products": {
+                    "edges": [
+                        {
+                            "node": self._product_payload(
+                                1,
+                                title="Hero Product",
+                                handle="hero-product",
+                                variant_id=11,
+                                media_id=21,
+                                image_url="https://cdn.example.com/hero.jpg",
+                                price="19.99",
+                                inventory_quantity=12,
+                            )
+                        }
+                    ],
+                    "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"},
+                }
+            },
+            {
+                "products": {
+                    "edges": [
+                        {
+                            "node": self._product_payload(
+                                2,
+                                title="Second Product",
+                                handle="second-product",
+                                variant_id=12,
+                                media_id=22,
+                                image_url="https://cdn.example.com/second.jpg",
+                                price="29.99",
+                                inventory_quantity=6,
+                            )
+                        }
+                    ],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            },
+        ]
+
+        response = self.client.post("/api/shopify/products/import/", {}, format="json")
+        self.shopify_profile.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(execute_mock.call_count, 2)
+        self.assertTrue(self.shopify_profile.connect_products)
+        self.assertEqual(ShopifyProduct.objects.filter(shopify_profile=self.shopify_profile).count(), 2)
+        self.assertEqual(ShopifyProductVariant.objects.count(), 2)
+        self.assertEqual(ShopifyProductMedia.objects.count(), 2)
+        hero_product = ShopifyProduct.objects.get(
+            shopify_profile=self.shopify_profile,
+            shopify_product_id="gid://shopify/Product/1",
+        )
+        hero_variant = hero_product.variants.get(shopify_variant_id="gid://shopify/ProductVariant/11")
+        hero_media = hero_product.media.get(shopify_media_id="gid://shopify/MediaImage/21")
+        self.assertEqual(hero_product.featured_image_url, "https://cdn.example.com/hero.jpg")
+        self.assertEqual(hero_variant.price_amount, Decimal("19.99"))
+        self.assertEqual(hero_media.source_url, "https://cdn.example.com/hero.jpg")
+        self.assertEqual(
+            response.json()["summary"],
+            {
+                "requested": 2,
+                "fetched": 2,
+                "products_created": 2,
+                "products_updated": 0,
+                "products_deleted": 0,
+                "variants_created": 2,
+                "variants_updated": 0,
+                "variants_deleted": 0,
+                "media_created": 2,
+                "media_updated": 0,
+                "media_deleted": 0,
+            },
+        )
+        self.assertTrue(response.json()["connect_products"])
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_products_import_endpoint_blocks_second_import_after_first_success(self, execute_mock):
+        execute_mock.side_effect = [
+            {
+                "products": {
+                    "edges": [
+                        {
+                            "node": self._product_payload(
+                                10,
+                                title="Delete Me",
+                                handle="delete-me",
+                                variant_id=110,
+                                media_id=210,
+                                image_url="https://cdn.example.com/delete.jpg",
+                                price="9.99",
+                                inventory_quantity=2,
+                            )
+                        }
+                    ],
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                }
+            },
+        ]
+
+        first_response = self.client.post("/api/shopify/products/import/", {}, format="json")
+        self.shopify_profile.refresh_from_db()
+        execute_mock.reset_mock()
+        second_response = self.client.post("/api/shopify/products/import/", {}, format="json")
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertTrue(self.shopify_profile.connect_products)
+        self.assertEqual(second_response.status_code, 400)
+        self.assertEqual(execute_mock.call_count, 0)
+        self.assertEqual(
+            second_response.json()["error"],
+            "Products can be imported only once. Future product changes sync via webhooks.",
+        )
+
+    def test_products_list_endpoint_returns_local_catalog_projection(self):
+        product = ShopifyProduct.objects.create(
+            shopify_profile=self.shopify_profile,
+            shopify_product_id="gid://shopify/Product/300",
+            title="Builder Hero",
+            handle="builder-hero",
+            description_html="<p>Builder Hero description</p>",
+            status="ACTIVE",
+            tags=["builder"],
+            featured_image_url="https://cdn.example.com/builder.jpg",
+            total_inventory=14,
+            variant_count=1,
+            media_count=1,
+        )
+        ShopifyProductVariant.objects.create(
+            product=product,
+            shopify_variant_id="gid://shopify/ProductVariant/300",
+            title="Default Title",
+            sku="BUILDER-300",
+            price_amount=Decimal("49.99"),
+            inventory_quantity=14,
+            position=1,
+            featured_image_url="https://cdn.example.com/builder.jpg",
+        )
+        ShopifyProductMedia.objects.create(
+            product=product,
+            shopify_media_id="gid://shopify/MediaImage/300",
+            media_type="image",
+            source_url="https://cdn.example.com/builder.jpg",
+            preview_image_url="https://cdn.example.com/builder.jpg",
+            position=1,
+        )
+
+        response = self.client.get("/api/shopify/products/?search=Builder")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["page_info"], {"has_next_page": False, "returned": 1, "total_count": 1})
+        self.assertEqual(payload["products"][0]["shopify_product_id"], "gid://shopify/Product/300")
+        self.assertEqual(payload["products"][0]["variants"][0]["sku"], "BUILDER-300")
+        self.assertEqual(payload["products"][0]["media"][0]["source_url"], "https://cdn.example.com/builder.jpg")

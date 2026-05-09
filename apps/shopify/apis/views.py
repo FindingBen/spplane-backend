@@ -6,11 +6,14 @@ from rest_framework.views import APIView
 from apps.accounts.models import ShopifyProfile
 from apps.shopify.apis.serializers import (
     ShopifyCustomerListQuerySerializer,
+    ShopifyProductListQuerySerializer,
 )
 from apps.shopify.service import (
     ShopifyCustomerImportStateError,
     ShopifyCustomerService,
     ShopifyGraphQLError,
+    ShopifyProductImportStateError,
+    ShopifyProductService,
 )
 
 
@@ -67,6 +70,49 @@ class ShopifyCustomerImportView(APIView):
                 user=request.user,
             )
         except ShopifyCustomerImportStateError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except ShopifyGraphQLError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class ShopifyProductListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        serializer = ShopifyProductListQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+
+        shopify_profile = ShopifyProfile.objects.filter(user=request.user).first()
+        if shopify_profile is None:
+            return Response(
+                {"error": "Shopify store is not connected for this user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payload = ShopifyProductService.list_products(
+            shopify_profile,
+            search_query=serializer.validated_data["search"],
+            first=serializer.validated_data["first"],
+        )
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class ShopifyProductImportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        shopify_profile = ShopifyProfile.objects.filter(user=request.user).first()
+        if shopify_profile is None:
+            return Response(
+                {"error": "Shopify store is not connected for this user."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            payload = ShopifyProductService.import_products(shopify_profile)
+        except ShopifyProductImportStateError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except ShopifyGraphQLError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
