@@ -39,13 +39,23 @@ class ContentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return ContentService().get_user_contents(self.request.user)
 
-    def create(self, request):
-        template_id = request.data.get('template') or request.data.get('template_id')
-        structure = request.data.get('structure')
+    def _get_template_id(self, request, default=None):
+        return request.data.get('template') or request.data.get('template_id') or default
 
+    def _get_structure(self, request, default=None):
+        structure = request.data.get('structure', default)
+        if structure is None:
+            raise ValidationError('Structure must be a JSON object')
+
+        if isinstance(structure, str):
+            structure = json.loads(structure)
+
+        return structure
+
+    def create(self, request):
         try:
-            if isinstance(structure, str):
-                structure = json.loads(structure)
+            template_id = self._get_template_id(request)
+            structure = self._get_structure(request)
 
             content = ContentService.create_content(
                 user=request.user,
@@ -55,6 +65,33 @@ class ContentViewSet(viewsets.ModelViewSet):
             )
             serializer = self.get_serializer(content)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except json.JSONDecodeError:
+            return Response({'error': 'Structure must be valid JSON.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    def update(self, request, *_, **kwargs):
+        content = self.get_object()
+        partial = kwargs.get('partial', False)
+
+        try:
+            template_id = self._get_template_id(
+                request,
+                default=content.template_id if partial else None,
+            )
+            structure = self._get_structure(
+                request,
+                default=content.structure if partial else None,
+            )
+
+            content = ContentService.update_content(
+                content=content,
+                template_id=template_id,
+                structure=structure,
+                files=request.FILES,
+            )
+            serializer = self.get_serializer(content)
+            return Response(serializer.data)
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except json.JSONDecodeError:

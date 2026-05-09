@@ -21,7 +21,7 @@ SECRET_KEY = os.environ['SECRET_KEY']
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
-
+print(ENVIRONMENT)
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
@@ -246,12 +246,12 @@ EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_ROOT = BASE_DIR / "staticfiles"
-STATIC_URL = "/static/"
+# STATIC_ROOT = BASE_DIR / "staticfiles"
+STATIC_URL = "static/"
 
 if ENVIRONMENT == 'development':
-    MEDIA_URL = '/media/'
-    MEDIA_ROOT = BASE_DIR / 'media'
+    MEDIA_URL = 'media/'
+    MEDIA_ROOT = os.path.join(BASE_DIR,'media')
 else:
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')

@@ -22,6 +22,22 @@ class ContentService:
         return content
 
     @staticmethod
+    def update_content(content, template_id, structure, files=None):
+        """Update existing content and attach any newly uploaded media."""
+        upload_payload = ContentService.upload_content(
+            content.user,
+            template_id,
+            structure,
+            files=files,
+        )
+
+        content.template = upload_payload['template']
+        content.structure = upload_payload['structure']
+        content.save()
+
+        return content
+
+    @staticmethod
     def upload_content(user, template_id, structure, files=None):
         """Upload image/video files and return the final structure with media URLs."""
         ContentService._validate_template_exists(template_id)
@@ -33,6 +49,7 @@ class ContentService:
             structure,
             files=files,
         )
+        print('struct',updated_structure)
         media_urls = ContentService._extract_media_urls(updated_structure)
 
         return {
@@ -61,37 +78,37 @@ class ContentService:
     @staticmethod
     def _extract_media_urls(structure):
         """Collect image and video URLs already uploaded by the frontend."""
-        components = structure.get('components', [])
+        blocks = structure.get('blocks', []) or structure.get('components', [])
         media_urls = {
             'images': [],
             'videos': [],
         }
 
-        for index, component in enumerate(components):
-            if not isinstance(component, dict):
+        for index, block in enumerate(blocks):
+            if not isinstance(block, dict):
                 continue
 
-            props = component.get('props', {})
+            props = block.get('props', {})
             if not isinstance(props, dict):
                 continue
 
-            component_id = component.get('id') or f'component_{index}'
-            component_type = component.get('type')
+            block_id = block.get('id') or f'block_{index}'
+            block_type = block.get('type')
 
-            if component_type == 'image':
-                image_url = props.get('src') or props.get('url')
+            if block_type in ('image-hero', 'image'):
+                image_url = props.get('fallbackImage') or props.get('imageUrl') or props.get('src') or props.get('url')
                 if image_url:
                     media_urls['images'].append({
-                        'component_id': component_id,
+                        'block_id': block_id,
                         'url': image_url,
                     })
 
-            if component_type == 'video':
-                playback_url = props.get('playbackUrl') or props.get('src') or props.get('url')
+            if block_type in ('video-hero', 'video'):
+                playback_url = props.get('videoUrl') or props.get('playbackUrl') or props.get('src') or props.get('url')
                 poster_url = props.get('posterUrl') or props.get('poster')
                 if playback_url or poster_url:
                     media_urls['videos'].append({
-                        'component_id': component_id,
+                        'block_id': block_id,
                         'playback_url': playback_url,
                         'poster_url': poster_url,
                     })
@@ -105,36 +122,51 @@ class ContentService:
             return copy.deepcopy(structure)
 
         updated_structure = copy.deepcopy(structure)
-        components = updated_structure.get('components', [])
+        blocks = updated_structure.get('blocks', [])
 
-        for index, component in enumerate(components):
-            if not isinstance(component, dict):
+        for index, block in enumerate(blocks):
+            if not isinstance(block, dict):
                 continue
 
-            props = component.get('props', {})
-            if not isinstance(props, dict):
+            props = block.get('props')
+            if props is None:
+                props = {}
+                block['props'] = props
+            elif not isinstance(props, dict):
                 continue
 
-            component_type = component.get('type')
-            component_id = component.get('id') or f'component_{index}'
-            upload_field = props.get('uploadField') or component_id
+            block_type = block.get('type')
+            block_id = block.get('id') or f'block_{index}'
+            
+            # Extract upload fields from nested uploadFields structure
+            upload_fields_map = props.get('uploadFields', {})
 
-            if component_type == 'image':
+            if block_type == 'image-hero':
+                # Try to get image upload field from uploadFields, fallback to uploadField, then block_id
+                image_upload_key = upload_fields_map.get('fallbackImage') or upload_fields_map.get('imageUrl')
+                upload_field = (image_upload_key.get('uploadField') if isinstance(image_upload_key, dict) else None) or props.get('uploadField') or block_id
+                
                 image_file = files.get(upload_field)
                 if image_file:
                     saved_media = ContentService._save_uploaded_file(user, image_file, 'images')
-                    props['src'] = saved_media['url']
+                    props['fallbackImage'] = saved_media['url']
                     props['storageKey'] = saved_media['storage_key']
 
-            if component_type == 'video':
+            if block_type == 'video-hero':
+                # Try to get video upload field from uploadFields, fallback to uploadField, then block_id
+                video_upload_key = upload_fields_map.get('videoUrl')
+                upload_field = (video_upload_key.get('uploadField') if isinstance(video_upload_key, dict) else None) or props.get('uploadField') or block_id
+                
                 video_file = files.get(upload_field)
                 if video_file:
                     saved_media = ContentService._save_uploaded_file(user, video_file, 'videos')
-                    props['playbackUrl'] = saved_media['url']
+                    props['videoUrl'] = saved_media['url']
                     props['storageKey'] = saved_media['storage_key']
                     props['mimeType'] = video_file.content_type or props.get('mimeType')
 
-                poster_field = props.get('posterUploadField') or f'{upload_field}__poster'
+                poster_upload_key = upload_fields_map.get('posterUrl')
+                poster_field = (poster_upload_key.get('uploadField') if isinstance(poster_upload_key, dict) else None) or props.get('posterUploadField') or f'{upload_field}__poster'
+                
                 poster_file = files.get(poster_field)
                 if poster_file:
                     saved_poster = ContentService._save_uploaded_file(user, poster_file, 'video-posters')
@@ -153,6 +185,12 @@ class ContentService:
             folder,
             f'{uuid.uuid4().hex}{file_extension}',
         ).replace('\\', '/')
+        
+        # Ensure media root exists for local development
+        if hasattr(default_storage, 'location'):
+            media_root = default_storage.location
+            os.makedirs(media_root, exist_ok=True)
+        
         saved_path = default_storage.save(storage_key, uploaded_file)
 
         return {

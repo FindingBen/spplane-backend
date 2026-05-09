@@ -3,7 +3,8 @@ from django.urls import path, include
 from django.http import JsonResponse
 from apps.sms.apis.views import VonageDeliveryWebhookView
 from apps.accounts.apis.views import ShopifyOAuthInitView, ShopifyOAuthCallbackView
-
+from django.conf.urls.static import static
+from django.conf import settings
 
 def health_check(request):
     return JsonResponse({"status": "ok"})
@@ -25,3 +26,6 @@ urlpatterns = [
     path('api/oAuth-login', ShopifyOAuthInitView.as_view(), name='shopify_oauth_legacy'),
     path('api/oAuth-callback', ShopifyOAuthCallbackView.as_view(), name='shopify_callback_legacy'),
 ]
+
+
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
