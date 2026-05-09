@@ -15,6 +15,16 @@ def _env_flag(name, default=False):
 
     return value.lower() in {'1', 'true', 'yes', 'on'}
 
+
+def _default_s3_domain(bucket_name, region_name):
+    if not bucket_name:
+        return None
+
+    if region_name:
+        return f'{bucket_name}.s3.{region_name}.amazonaws.com'
+
+    return f'{bucket_name}.s3.amazonaws.com'
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv_file = os.path.join(BASE_DIR, ".env")
 if os.path.isfile(dotenv_file):
@@ -269,7 +279,11 @@ if USE_S3_STORAGE:
         or os.environ.get('AWS_DEFAULT_REGION')
         or os.environ.get('AWS_REGION')
     )
-    AWS_S3_CUSTOM_DOMAIN = os.environ.get('AWS_S3_CUSTOM_DOMAIN') or os.environ.get('AWS_CLOUDFRONT_DOMAIN')
+    AWS_S3_CUSTOM_DOMAIN = (
+        os.environ.get('AWS_S3_CUSTOM_DOMAIN')
+        or os.environ.get('AWS_CLOUDFRONT_DOMAIN')
+        or _default_s3_domain(AWS_STORAGE_BUCKET_NAME, AWS_S3_REGION_NAME)
+    )
     AWS_DEFAULT_ACL = None
     AWS_QUERYSTRING_AUTH = False
     AWS_S3_FILE_OVERWRITE = False
