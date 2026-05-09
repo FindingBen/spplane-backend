@@ -1,10 +1,13 @@
+import json
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from apps.content.models import Template, Content
+from apps.content.models import Template
 from django.core.exceptions import ValidationError
-from apps.content.service import ContentService, TemplateService
+from apps.content.service import ContentService
 from .serializers import TemplateSerializer, ContentSerializer
 
 
@@ -31,20 +34,59 @@ class ContentViewSet(viewsets.ModelViewSet):
     """
     serializer_class = ContentSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
         return ContentService().get_user_contents(self.request.user)
 
-    def perform_create(self, serializer):
-        """Call static service method"""
+    def create(self, request):
+        template_id = request.data.get('template') or request.data.get('template_id')
+        structure = request.data.get('structure')
+
         try:
-            # Call static method directly
-            ContentService.create_content(
-                user=self.request.user,
-                template_id=serializer.validated_data['template'].id,
-                structure=serializer.validated_data['structure']
+            if isinstance(structure, str):
+                structure = json.loads(structure)
+
+            content = ContentService.create_content(
+                user=request.user,
+                template_id=template_id,
+                structure=structure,
+                files=request.FILES,
             )
+            serializer = self.get_serializer(content)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except json.JSONDecodeError:
+            return Response({'error': 'Structure must be valid JSON.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    
+
+class ContentUploadViewSet(viewsets.ViewSet):
+    """
+    Endpoint for uploading content structure (e.g. from builder).
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    @action(detail=False, methods=['post'])
+    def upload(self, request):
+        """Upload content structure"""
+        template_id = request.data.get('template') or request.data.get('template_id')
+        structure = request.data.get('structure')
+
+        try:
+            if isinstance(structure, str):
+                structure = json.loads(structure)
+
+            content = ContentService.create_content(
+                user=request.user,
+                template_id=template_id,
+                structure=structure,
+                files=request.FILES,
+            )
+            serializer = ContentSerializer(content, context={'request': request})
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except json.JSONDecodeError:
+            return Response({'error': 'Structure must be valid JSON.'}, status=status.HTTP_400_BAD_REQUEST)

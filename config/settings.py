@@ -20,6 +20,7 @@ SECRET_KEY = os.environ['SECRET_KEY']
 
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
+ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
 
 ALLOWED_HOSTS = [
     "localhost",
@@ -43,6 +44,7 @@ INSTALLED_APPS = [
 
     'corsheaders',
     'rest_framework',
+    'storages',
 
     "apps.accounts.apps.AccountsConfig",
     "apps.contacts.apps.ContactsConfig",
@@ -246,3 +248,29 @@ EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATIC_URL = "/static/"
+
+if ENVIRONMENT == 'development':
+    MEDIA_URL = '/media/'
+    MEDIA_ROOT = BASE_DIR / 'media'
+else:
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', 'spp-images-production')
+    AWS_S3_REGION_NAME = os.environ.get('AWS_REGION')
+    AWS_S3_CUSTOM_DOMAIN = (
+        os.environ.get('AWS_CLOUDFRONT_DOMAIN')
+        or f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    )
+    AWS_DEFAULT_ACL = None
+    AWS_QUERYSTRING_AUTH = False
+
+    STORAGES = {
+        'default': {
+            'BACKEND': 'storages.backends.s3.S3Storage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
+
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
