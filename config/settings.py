@@ -5,6 +5,15 @@ from datetime import timedelta
 
 
 from decimal import Decimal, ROUND_HALF_UP
+from django.core.exceptions import ImproperlyConfigured
+
+
+def _env_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+
+    return value.lower() in {'1', 'true', 'yes', 'on'}
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv_file = os.path.join(BASE_DIR, ".env")
@@ -20,8 +29,8 @@ SECRET_KEY = os.environ['SECRET_KEY']
 
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
-ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
-print(ENVIRONMENT)
+ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development').lower()
+USE_S3_STORAGE = _env_flag('USE_S3_STORAGE', default=ENVIRONMENT != 'development')
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
@@ -247,30 +256,61 @@ EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 # STATIC_ROOT = BASE_DIR / "staticfiles"
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
+MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_URL = '/media/'
 
-if ENVIRONMENT == 'development':
-    MEDIA_URL = 'media/'
-    MEDIA_ROOT = os.path.join(BASE_DIR,'media')
-else:
+if USE_S3_STORAGE:
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', 'spp-images-production')
-    AWS_S3_REGION_NAME = os.environ.get('AWS_REGION')
-    AWS_S3_CUSTOM_DOMAIN = (
-        os.environ.get('AWS_CLOUDFRONT_DOMAIN')
-        or f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
+    AWS_S3_REGION_NAME = (
+        os.environ.get('AWS_S3_REGION_NAME')
+        or os.environ.get('AWS_DEFAULT_REGION')
+        or os.environ.get('AWS_REGION')
     )
+    AWS_S3_CUSTOM_DOMAIN = os.environ.get('AWS_S3_CUSTOM_DOMAIN') or os.environ.get('AWS_CLOUDFRONT_DOMAIN')
     AWS_DEFAULT_ACL = None
     AWS_QUERYSTRING_AUTH = False
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+
+    if not AWS_STORAGE_BUCKET_NAME:
+        raise ImproperlyConfigured(
+            'AWS_STORAGE_BUCKET_NAME must be set when S3 storage is enabled.'
+        )
+
+    storage_options = {
+        'access_key': AWS_ACCESS_KEY_ID,
+        'secret_key': AWS_SECRET_ACCESS_KEY,
+        'bucket_name': AWS_STORAGE_BUCKET_NAME,
+        'region_name': AWS_S3_REGION_NAME,
+        'default_acl': AWS_DEFAULT_ACL,
+        'querystring_auth': AWS_QUERYSTRING_AUTH,
+        'file_overwrite': AWS_S3_FILE_OVERWRITE,
+        'signature_version': AWS_S3_SIGNATURE_VERSION,
+    }
+    if AWS_S3_CUSTOM_DOMAIN:
+        storage_options['custom_domain'] = AWS_S3_CUSTOM_DOMAIN
 
     STORAGES = {
         'default': {
             'BACKEND': 'storages.backends.s3.S3Storage',
+            'OPTIONS': storage_options,
         },
         'staticfiles': {
             'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
         },
     }
 
-    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
+    if AWS_S3_CUSTOM_DOMAIN:
+        MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN.rstrip("/")}/'
+else:
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
