@@ -510,7 +510,7 @@ class ShopifyProductService:
 
         products_payload = data.get("products", {})
         edges = products_payload.get("edges", [])
-        print('EDGES',edges)
+       
         products = [
             ShopifyProductService._serialize_remote_product(edge.get("node", {}))
             for edge in edges
@@ -758,7 +758,7 @@ class ShopifyProductService:
             featured_image_url = variants[0].get("featured_image_url", "")
 
         variants_count = product.get("variantsCount") or {}
-        print(product)
+
         return {
             "id": product.get("id") or "",
             "title": product.get("title") or "",

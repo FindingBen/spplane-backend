@@ -99,6 +99,11 @@ SHOPIFY_REDIRECT_URI = os.environ.get('SHOPIFY_REDIRECT_URI', '')
 SHOPIFY_API_VERSION = os.environ.get('SHOPIFY_API_VERSION', '2025-01')
 SHOPIFY_APP_URL = os.environ.get('SHOPIFY_APP_URL', '')
 
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
+OPENAI_API_BASE_URL = os.environ.get('OPENAI_API_BASE_URL', 'https://api.openai.com/v1')
+OPENAI_TIMEOUT_SECONDS = int(os.environ.get('OPENAI_TIMEOUT_SECONDS', '30'))
+
 
 ROOT_URLCONF = 'config.urls'
 

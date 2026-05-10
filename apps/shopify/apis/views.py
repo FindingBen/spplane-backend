@@ -143,7 +143,6 @@ class ShopifyProductListView(APIView):
             search_query=serializer.validated_data["search"],
             first=serializer.validated_data["first"],
         )
-        print(payload)
         return Response(payload, status=status.HTTP_200_OK)
 
 

@@ -5,9 +5,10 @@ from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from apps.content.llm import LLMClientError
 from apps.content.models import Template
 from django.core.exceptions import ValidationError
-from apps.content.service import ContentService
+from apps.content.service import ContentService, ProductContentGenerationService
 from .serializers import TemplateSerializer, ContentSerializer
 
 
@@ -127,3 +128,43 @@ class ContentUploadViewSet(viewsets.ViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except json.JSONDecodeError:
             return Response({'error': 'Structure must be valid JSON.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProductContentGenerationView(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request):
+        product_id = request.data.get('product_id', None)
+        if product_id is None:
+            return Response({'error': 'product_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        persist = request.data.get('persist', True)
+        if isinstance(persist, str):
+            persist = persist.strip().lower() not in {'0', 'false', 'no'}
+
+        try:
+            process = ProductContentGenerationService.generate_content_for_product(
+                user=request.user,
+                product_id=product_id,
+                persist=persist,
+            )
+        except ValidationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except LLMClientError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        response_payload = {
+            'content': (
+                ContentSerializer(process['content'], context={'request': request}).data
+                if process['content'] is not None
+                else None
+            ),
+            'copy': process['copy'],
+            'llm_provider': process['llm_provider'],
+            'product': process['product'],
+            'rules': process['rules'],
+            'structure': process['structure'],
+            'template_id': process['template'].id,
+        }
+        print('Generated content for product', response_payload)
+        return Response(response_payload, status=status.HTTP_200_OK)
