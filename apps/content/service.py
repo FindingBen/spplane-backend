@@ -106,7 +106,13 @@ class ContentService:
             block_type = block.get('type')
 
             if block_type in ('image-hero', 'image'):
-                image_url = props.get('fallbackImage') or props.get('imageUrl') or props.get('src') or props.get('url')
+                image_url = (
+                    props.get('fallbackImage')
+                    or props.get('imageUrl')
+                    or props.get('image')
+                    or props.get('src')
+                    or props.get('url')
+                )
                 if image_url:
                     media_urls['images'].append({
                         'block_id': block_id,
@@ -153,7 +159,11 @@ class ContentService:
 
             if block_type in ('image-hero', 'image'):
                 # Try to get image upload field from uploadFields, fallback to uploadField, then block_id
-                image_upload_key = upload_fields_map.get('fallbackImage') or upload_fields_map.get('imageUrl')
+                image_upload_key = (
+                    upload_fields_map.get('fallbackImage')
+                    or upload_fields_map.get('imageUrl')
+                    or upload_fields_map.get('image')
+                )
                 upload_field = (image_upload_key.get('uploadField') if isinstance(image_upload_key, dict) else None) or props.get('uploadField') or block_id
                 
                 image_file = files.get(upload_field)
@@ -163,6 +173,8 @@ class ContentService:
                         props['fallbackImage'] = saved_media['url']
                     elif 'imageUrl' in props:
                         props['imageUrl'] = saved_media['url']
+                    elif 'image' in props:
+                        props['image'] = saved_media['url']
                     else:
                         props['src'] = saved_media['url']
                     props['storageKey'] = saved_media['storage_key']

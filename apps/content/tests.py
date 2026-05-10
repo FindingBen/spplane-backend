@@ -100,6 +100,43 @@ class ContentUploadServiceTests(TestCase):
 		self.assertTrue(props['src'].startswith('/media/content/'))
 		self.assertTrue(props['storageKey'].startswith(f'content/{self.user.id}/images/'))
 
+	def test_create_content_uploads_image_using_nested_image_upload_field(self):
+		structure = {
+			'version': 1,
+			'components': [
+				{
+					'id': 'product-image',
+					'type': 'image',
+					'props': {
+						'alt': 'Product image',
+						'image': '',
+						'uploadFields': {
+							'image': {
+								'uploadField': 'image-file-3',
+							},
+						},
+					},
+				},
+			],
+		}
+		files = MultiValueDict({
+			'image-file-3': [
+				SimpleUploadedFile('product.jpg', b'image-bytes', content_type='image/jpeg'),
+			],
+		})
+
+		with self.settings(MEDIA_ROOT=self.temp_media.name, MEDIA_URL='/media/'):
+			content = ContentService.create_content(
+				self.user,
+				self.template.id,
+				structure,
+				files=files,
+			)
+
+		props = content.structure['components'][0]['props']
+		self.assertTrue(props['image'].startswith('/media/content/'))
+		self.assertTrue(props['storageKey'].startswith(f'content/{self.user.id}/images/'))
+
 	def test_create_content_uploads_video_and_poster_and_keeps_metadata(self):
 		structure = {
 			'version': 1,
