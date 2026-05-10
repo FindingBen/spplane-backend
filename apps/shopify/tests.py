@@ -1,8 +1,12 @@
+import base64
+import hashlib
+import hmac
+import json
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from apps.accounts.models import ShopifyProfile, User
@@ -537,3 +541,196 @@ class ShopifyProductImportViewTests(TestCase):
         self.assertEqual(payload["products"][0]["shopify_product_id"], "gid://shopify/Product/300")
         self.assertEqual(payload["products"][0]["variants"][0]["sku"], "BUILDER-300")
         self.assertEqual(payload["products"][0]["media"][0]["source_url"], "https://cdn.example.com/builder.jpg")
+
+
+@override_settings(SHOPIFY_API_SECRET="webhook-secret")
+class ShopifyProductWebhookViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="webhook-merchant@example.com",
+            password="password123",
+            user_type="shopify",
+            is_active=True,
+        )
+        self.shopify_profile = ShopifyProfile.objects.create(
+            user=self.user,
+            shop_domain="catalog.myshopify.com",
+            access_token="catalog-token",
+        )
+        self.client = APIClient()
+
+    @staticmethod
+    def _signed_request_body(payload: dict) -> tuple[bytes, str]:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        digest = hmac.new(b"webhook-secret", body, hashlib.sha256).digest()
+        return body, base64.b64encode(digest).decode("utf-8")
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_create_product_webhook_syncs_product_from_graphql_projection(self, execute_mock):
+        execute_mock.return_value = {
+            "product": ShopifyProductImportViewTests._product_payload(
+                1,
+                title="Webhook Product",
+                handle="webhook-product",
+                variant_id=11,
+                media_id=21,
+                image_url="https://cdn.example.com/webhook.jpg",
+                price="39.99",
+                inventory_quantity=8,
+            )
+        }
+        request_body, request_hmac = self._signed_request_body(
+            {
+                "id": 1,
+                "admin_graphql_api_id": "gid://shopify/Product/1",
+                "title": "Webhook Product",
+            }
+        )
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/products/product_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+        self.shopify_profile.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.shopify_profile.connect_products)
+        self.assertEqual(execute_mock.call_count, 1)
+        self.assertEqual(execute_mock.call_args.kwargs["variables"]["id"], "gid://shopify/Product/1")
+        product = ShopifyProduct.objects.get(
+            shopify_profile=self.shopify_profile,
+            shopify_product_id="gid://shopify/Product/1",
+        )
+        self.assertEqual(product.title, "Webhook Product")
+        self.assertEqual(product.variants.get().sku, "SKU-11")
+        self.assertEqual(product.media.get().source_url, "https://cdn.example.com/webhook.jpg")
+        self.assertTrue(response.json()["connect_products"])
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_update_product_webhook_syncs_product_from_graphql_projection(self, execute_mock):
+        execute_mock.return_value = {
+            "product": ShopifyProductImportViewTests._product_payload(
+                2,
+                title="Updated Webhook Product",
+                handle="updated-webhook-product",
+                variant_id=22,
+                media_id=32,
+                image_url="https://cdn.example.com/updated-webhook.jpg",
+                price="49.99",
+                inventory_quantity=5,
+            )
+        }
+        request_body, request_hmac = self._signed_request_body(
+            {
+                "id": 2,
+                "admin_graphql_api_id": "gid://shopify/Product/2",
+                "title": "Updated Webhook Product",
+            }
+        )
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/products/update_product_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+        self.shopify_profile.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.shopify_profile.connect_products)
+        self.assertEqual(execute_mock.call_count, 1)
+        self.assertEqual(execute_mock.call_args.kwargs["variables"]["id"], "gid://shopify/Product/2")
+        product = ShopifyProduct.objects.get(
+            shopify_profile=self.shopify_profile,
+            shopify_product_id="gid://shopify/Product/2",
+        )
+        self.assertEqual(product.title, "Updated Webhook Product")
+        self.assertEqual(product.variants.get().sku, "SKU-22")
+        self.assertEqual(product.media.get().source_url, "https://cdn.example.com/updated-webhook.jpg")
+        self.assertTrue(response.json()["connect_products"])
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_delete_product_webhook_marks_local_projection_deleted(self, execute_mock):
+        product = ShopifyProduct.objects.create(
+            shopify_profile=self.shopify_profile,
+            shopify_product_id="gid://shopify/Product/3",
+            title="Delete Me",
+            handle="delete-me",
+            status="ACTIVE",
+            featured_image_url="https://cdn.example.com/delete-me.jpg",
+            total_inventory=3,
+            variant_count=1,
+            media_count=1,
+        )
+        variant = ShopifyProductVariant.objects.create(
+            product=product,
+            shopify_variant_id="gid://shopify/ProductVariant/33",
+            title="Default Title",
+            sku="SKU-33",
+            price_amount=Decimal("9.99"),
+            inventory_quantity=3,
+            position=1,
+            featured_image_url="https://cdn.example.com/delete-me.jpg",
+        )
+        media = ShopifyProductMedia.objects.create(
+            product=product,
+            shopify_media_id="gid://shopify/MediaImage/43",
+            media_type="image",
+            source_url="https://cdn.example.com/delete-me.jpg",
+            preview_image_url="https://cdn.example.com/delete-me.jpg",
+            position=1,
+        )
+        request_body, request_hmac = self._signed_request_body(
+            {
+                "id": 3,
+                "admin_graphql_api_id": "gid://shopify/Product/3",
+                "title": "Delete Me",
+            }
+        )
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/products/delete_product_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+        self.shopify_profile.refresh_from_db()
+        product.refresh_from_db()
+        variant.refresh_from_db()
+        media.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(execute_mock.call_count, 0)
+        self.assertTrue(self.shopify_profile.connect_products)
+        self.assertIsNotNone(product.deleted_at)
+        self.assertIsNotNone(variant.deleted_at)
+        self.assertIsNotNone(media.deleted_at)
+        self.assertEqual(response.json()["summary"]["products_deleted"], 1)
+        self.assertEqual(response.json()["summary"]["variants_deleted"], 1)
+        self.assertEqual(response.json()["summary"]["media_deleted"], 1)
+        self.assertTrue(response.json()["connect_products"])
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_create_product_webhook_rejects_invalid_hmac(self, execute_mock):
+        request_body, _ = self._signed_request_body({"id": 1})
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/products/product_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256="invalid",
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"], "Invalid HMAC signature.")
+        self.assertEqual(execute_mock.call_count, 0)

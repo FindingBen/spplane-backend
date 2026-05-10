@@ -510,6 +510,7 @@ class ShopifyProductService:
 
         products_payload = data.get("products", {})
         edges = products_payload.get("edges", [])
+        print('EDGES',edges)
         products = [
             ShopifyProductService._serialize_remote_product(edge.get("node", {}))
             for edge in edges
@@ -545,6 +546,36 @@ class ShopifyProductService:
 
         payload["connect_products"] = shopify_profile.connect_products
         return payload
+
+    @staticmethod
+    def sync_product_from_webhook(shopify_profile, payload: dict) -> dict:
+        product_id = ShopifyProductService._extract_webhook_product_id(payload)
+        if not product_id:
+            raise ValueError("Webhook payload is missing a product id.")
+
+        sync_payload = ShopifyProductService.sync_product(shopify_profile, product_id)
+
+        if not shopify_profile.connect_products:
+            shopify_profile.connect_products = True
+            shopify_profile.save(update_fields=["connect_products"])
+
+        sync_payload["connect_products"] = shopify_profile.connect_products
+        return sync_payload
+
+    @staticmethod
+    def delete_product_from_webhook(shopify_profile, payload: dict) -> dict:
+        product_id = ShopifyProductService._extract_webhook_product_id(payload)
+        if not product_id:
+            raise ValueError("Webhook payload is missing a product id.")
+
+        delete_payload = ShopifyProductService.delete_product(shopify_profile, product_id)
+
+        if not shopify_profile.connect_products:
+            shopify_profile.connect_products = True
+            shopify_profile.save(update_fields=["connect_products"])
+
+        delete_payload["connect_products"] = shopify_profile.connect_products
+        return delete_payload
 
     @staticmethod
     def sync_product(shopify_profile, shopify_product_id: str) -> dict:
@@ -727,7 +758,7 @@ class ShopifyProductService:
             featured_image_url = variants[0].get("featured_image_url", "")
 
         variants_count = product.get("variantsCount") or {}
-
+        print(product)
         return {
             "id": product.get("id") or "",
             "title": product.get("title") or "",
@@ -1140,3 +1171,22 @@ class ShopifyProductService:
             return None
 
         return parse_datetime(value)
+
+    @staticmethod
+    def _extract_webhook_product_id(payload: dict) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+
+        graphql_id = str(payload.get("admin_graphql_api_id") or "").strip()
+        if graphql_id:
+            return graphql_id
+
+        raw_id = payload.get("id")
+        if isinstance(raw_id, str) and raw_id.startswith("gid://"):
+            return raw_id.strip()
+
+        parsed_id = ShopifyProductService._parse_int(raw_id)
+        if parsed_id is None:
+            return None
+
+        return f"gid://shopify/Product/{parsed_id}"
