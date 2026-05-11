@@ -93,6 +93,7 @@ query getProducts($first: Int!, $after: String, $query: String, $reverse: Boolea
 """
 
 
+
 GET_PRODUCT_QUERY = """
 query getProductById($id: ID!) {
   product(id: $id) {
@@ -149,6 +150,47 @@ query getProductById($id: ID!) {
           }
         }
       }
+    }
+  }
+}
+"""
+
+
+
+CREATE_PURCHASED_CHARGE = """
+mutation AppPurchaseOneTimeCreate(
+  $name: String!
+  $price: MoneyInput!
+  $returnUrl: URL!
+  $test: Boolean = false
+) {
+  appPurchaseOneTimeCreate(
+    name: $name
+    price: $price
+    returnUrl: $returnUrl
+    test: $test
+  ) {
+    userErrors {
+      field
+      message
+    }
+    appPurchaseOneTime {
+      id
+      createdAt
+    }
+    confirmationUrl
+  }
+}
+"""
+
+GET_SHOP_BILLING_STATE = """
+query {
+  shop {
+    myshopifyDomain
+    plan {
+      publicDisplayName
+      partnerDevelopment
+      shopifyPlus
     }
   }
 }

@@ -70,7 +70,8 @@ INSTALLED_APPS = [
     "apps.content.apps.ContentConfig",
     "apps.campaign.apps.CampaignConfig",
     "apps.sms.apps.SmsConfig",
-     "apps.shopify.apps.ShopifyConfig",
+    "apps.shopify.apps.ShopifyConfig",
+    "apps.payment.apps.PaymentConfig",
 ]
 
 MIDDLEWARE = [

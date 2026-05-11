@@ -67,12 +67,17 @@ class WalletTransactionService:
 
         wallet.balance += amount
         wallet.save(update_fields=["balance", "updated_at"])
+        payment_refferance = payment_refferance or {}
         CreditLedger.objects.create(
             wallet=wallet,
             entry_type="top_up",
             amount=amount,
-            reference_id="",  # could be payment ID if integrated with payment gateway
-            note="Wallet top-up"
+            reference_id=str(
+                payment_refferance.get("payment_order_id")
+                or payment_refferance.get("provider_charge_id")
+                or ""
+            ),
+            note=payment_refferance.get("note", "Wallet top-up")
         )
         return True
     
