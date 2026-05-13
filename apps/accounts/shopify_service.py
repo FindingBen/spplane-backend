@@ -170,6 +170,7 @@ class ShopifyAccountService:
         Returns (user, created) where created=True on first install.
         """
         from apps.accounts.models import AuthProvider, ShopifyProfile, User, Wallet
+        from apps.accounts.tasks import send_new_user_notification_email_task
 
         shop_email = shop_data.get("email", "")
         shop_name = shop_data.get("name", "")
@@ -207,6 +208,7 @@ class ShopifyAccountService:
         )
 
         Wallet.objects.create(user=user)
+        send_new_user_notification_email_task.delay(user.email, user.user_type, "shopify")
 
         logger.info("ShopifyAccountService: created new user for shop %s", shop)
         return user, True

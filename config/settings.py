@@ -203,6 +203,7 @@ USE_I18N = True
 
 USE_TZ = True
 DEFAULT_FROM_EMAIL = 'support@sendperplane.com'
+NEW_USER_NOTIFICATION_EMAIL = os.environ.get('NEW_USER_NOTIFICATION_EMAIL') or os.environ.get('EMAIL_HOST_USER', '')
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 

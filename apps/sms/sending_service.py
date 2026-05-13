@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # HTTP status codes from the Messages API that indicate a permanent failure.
 # 429 (rate limit) and 5xx are transient and will be retried.
 _PERMANENT_HTTP_CODES = {400, 401, 402, 403, 422}
+_BLOCKED_DESTINATION_REGIONS = {"US", "CA"}
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,38 @@ class VonageProvider:
         self._vonage = Vonage(auth=auth)
 
     @staticmethod
-    def _normalize_msisdn(value: str, *, field_name: str) -> str:
+    def get_destination_region(value: str) -> str | None:
+        import phonenumbers
+
+        candidate = (value or "").strip()
+        if not candidate:
+            return None
+
+        if candidate.isdigit():
+            if candidate.startswith("0") or not 7 <= len(candidate) <= 15:
+                return None
+            candidate = f"+{candidate}"
+
+        try:
+            parsed = phonenumbers.parse(candidate, None)
+        except phonenumbers.NumberParseException:
+            return None
+
+        if not phonenumbers.is_possible_number(parsed) or not phonenumbers.is_valid_number(parsed):
+            return None
+
+        return phonenumbers.region_code_for_number(parsed) or None
+
+    @classmethod
+    def _assert_supported_recipient(cls, value: str, *, field_name: str) -> None:
+        region = cls.get_destination_region(value)
+        if region in _BLOCKED_DESTINATION_REGIONS:
+            raise ValueError(
+                f"{field_name} to US and CA numbers is not supported yet."
+            )
+
+    @staticmethod
+    def _normalize_msisdn(value: str, *, field_name: str, enforce_region_policy: bool = False) -> str:
         import phonenumbers
 
         candidate = (value or "").strip()
@@ -62,6 +94,8 @@ class VonageProvider:
         if candidate.isdigit():
             if candidate.startswith("0") or not 7 <= len(candidate) <= 15:
                 raise ValueError(f"{field_name} must be a valid E.164 phone number.")
+            if enforce_region_policy:
+                VonageProvider._assert_supported_recipient(candidate, field_name=field_name)
             return candidate
 
         try:
@@ -71,6 +105,9 @@ class VonageProvider:
 
         if not phonenumbers.is_possible_number(parsed) or not phonenumbers.is_valid_number(parsed):
             raise ValueError(f"{field_name} must be a valid E.164 phone number.")
+
+        if enforce_region_policy:
+            VonageProvider._assert_supported_recipient(candidate, field_name=field_name)
 
         return phonenumbers.format_number(
             parsed,
@@ -90,7 +127,11 @@ class VonageProvider:
 
     def send(self, from_: str, to: str, text: str, client_ref: str = "") -> SendResult:
         try:
-            normalized_to = self._normalize_msisdn(to, field_name="Recipient phone")
+            normalized_to = self._normalize_msisdn(
+                to,
+                field_name="Recipient phone",
+                enforce_region_policy=True,
+            )
             normalized_from = self._normalize_sender(from_)
             message = SmsMessagePayload(
                 to=normalized_to,
@@ -281,10 +322,7 @@ class SmsSendingService:
         )
 
         self._assert_sendable(sms)
-
-        contacts = self._get_eligible_contacts(sms)
-        if not contacts.exists():
-            raise ValueError("No eligible (subscribed) contacts found in the contact list.")
+        contacts = self._get_sendable_contacts(sms)
 
         #initiate wallet service once here to avoid circular imports with tasks.py which also needs it for refunds and adjustments after send completion
         wallet_service = WalletTransactionService()
@@ -330,8 +368,19 @@ class SmsSendingService:
         from apps.sms.models import Sms
 
         sms = Sms.objects.select_related("contact_list").get(id=sms_id)
-        contacts = self._get_eligible_contacts(sms)
+        contacts = self._get_sendable_contacts(sms)
         return PricingService.estimate_send_cost(contacts, sms.body, self.provider)
+
+    def validate_send_request(self, sms_id: str) -> None:
+        from apps.sms.models import Sms
+
+        sms = (
+            Sms.objects
+            .select_related("contact_list", "user")
+            .get(id=sms_id)
+        )
+        self._assert_sendable(sms)
+        self._get_sendable_contacts(sms)
 
     def render_body(
         self,
@@ -384,6 +433,29 @@ class SmsSendingService:
             .only("id", "phone", "first_name")
             .distinct()
         )
+
+    def _get_sendable_contacts(self, sms):
+        contacts = list(self._get_eligible_contacts(sms))
+        if not contacts:
+            raise ValueError("No eligible (subscribed) contacts found in the contact list.")
+
+        blocked_phones = [
+            contact.phone
+            for contact in contacts
+            if self.provider.get_destination_region(contact.phone) in _BLOCKED_DESTINATION_REGIONS
+        ]
+        if blocked_phones:
+            blocked_preview = ", ".join(blocked_phones[:3])
+            blocked_suffix = ""
+            if len(blocked_phones) > 3:
+                blocked_suffix = f" and {len(blocked_phones) - 3} more"
+
+            raise ValueError(
+                "Sending to US and CA numbers is not supported yet. "
+                f"Remove these contacts before sending: {blocked_preview}{blocked_suffix}."
+            )
+
+        return contacts
 
     def _build_recipients(self, sms, contacts) -> list[str]:
         """

@@ -1,6 +1,6 @@
 from django.test import TestCase, override_settings
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from rest_framework.test import APIClient
 from django.urls import reverse
@@ -106,7 +106,7 @@ class SmsEstimateCostTests(TestCase):
         )
         self.contact = Contact.objects.create(
             users=self.user,
-            phone='+12025550123',
+            phone='+4552529924',
             first_name='Ada',
             status='subscribed',
         )
@@ -129,7 +129,59 @@ class SmsEstimateCostTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload['recipients'], 1)
-        self.assertEqual(payload['details'][0]['phone'], '+12025550123')
+        self.assertEqual(payload['details'][0]['phone'], '+4552529924')
+
+    def test_estimate_cost_rejects_us_numbers(self):
+        self.contact.phone = '+12025550123'
+        self.contact.save(update_fields=['phone', 'updated_at'])
+
+        response = self.client.get(f'/api/sms/v1/{self.sms.id}/estimate-cost/')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('US and CA numbers is not supported yet', response.json()['error'])
+
+
+class SmsSendValidationTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='send-validation@example.com',
+            password='pass12345',
+            user_type='regular',
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.contact_list = ContactList.objects.create(
+            users=self.user,
+            segment_name='Blocked Region Contacts',
+        )
+        self.contact = Contact.objects.create(
+            users=self.user,
+            phone='+14165550123',
+            first_name='Lin',
+            status='subscribed',
+        )
+        SegmentMembership.objects.create(
+            contact_list=self.contact_list,
+            contact=self.contact,
+        )
+        self.sms = Sms.objects.create(
+            user=self.user,
+            contact_list=self.contact_list,
+            tracking_id='track_send_validation',
+            sender='SENDER',
+            body='Hello Lin',
+            status='draft',
+        )
+
+    @patch('apps.sms.tasks.dispatch_sms_send.delay')
+    def test_send_rejects_ca_numbers_before_queueing(self, delay_mock):
+        response = self.client.post(f'/api/sms/v1/{self.sms.id}/send/')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('US and CA numbers is not supported yet', response.json()['error'])
+        delay_mock.assert_not_called()
 
 
 class SmsSendingServiceTests(TestCase):
@@ -181,3 +233,23 @@ class VonageProviderTests(TestCase):
         self.assertFalse(result.success)
         self.assertTrue(result.is_permanent_failure)
         self.assertEqual(result.error_code, 'validation_error')
+
+    def test_send_rejects_us_and_ca_recipient_numbers(self):
+        provider = VonageProvider(api_key='key', api_secret='secret')
+        provider._vonage.messages.send = Mock()
+
+        for phone in ('+12025550123', '+14165550123'):
+            with self.subTest(phone=phone):
+                result = provider.send(
+                    from_='SPPLANE',
+                    to=phone,
+                    text='Hello world',
+                    client_ref='ref-blocked',
+                )
+
+                self.assertFalse(result.success)
+                self.assertTrue(result.is_permanent_failure)
+                self.assertEqual(result.error_code, 'validation_error')
+                self.assertIn('US and CA numbers is not supported yet', result.error_message)
+
+        provider._vonage.messages.send.assert_not_called()

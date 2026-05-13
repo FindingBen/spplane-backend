@@ -3,7 +3,7 @@ from datetime import timedelta
 from .errors import InsufficientBalanceError, WalletDoesNotExistError,InvalidTransactionError
 from django.utils.timezone import now
 from .models import AuthProvider, User,EmailVerification, Wallet, CreditLedger
-from .tasks import send_verification_email_task
+from .tasks import send_new_user_notification_email_task, send_verification_email_task
 from django.db import transaction
 
 
@@ -32,6 +32,7 @@ class AccountService:
 
         # trigger async email
         send_verification_email_task.delay(str(verification.token), user.email)
+        send_new_user_notification_email_task.delay(user.email, user.user_type, "direct")
 
         return user
     

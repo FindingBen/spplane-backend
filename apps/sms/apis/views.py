@@ -73,6 +73,7 @@ class SmsViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="send")
     def send(self, request, pk=None):
         from apps.sms.tasks import dispatch_sms_send
+        from apps.sms.sending_service import SmsSendingService
 
         instance = self.get_object()
 
@@ -86,7 +87,10 @@ class SmsViewSet(viewsets.ModelViewSet):
             )
 
         try:
+            SmsSendingService().validate_send_request(str(instance.id))
             dispatch_sms_send.delay(str(instance.id))
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             return Response({"error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
