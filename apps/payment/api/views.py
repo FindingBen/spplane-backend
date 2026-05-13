@@ -129,11 +129,8 @@ class SmsPackageViewSet(viewsets.ReadOnlyModelViewSet):
             return SmsPackage.objects.none()
 
         return (
-            SmsPackage.objects
-            .filter(
-                merchant_profile=shopify_profile,
-                is_active=True,
-            )
+            SmsPackageService
+            .get_available_packages_queryset(shopify_profile=shopify_profile)
             .order_by('price', 'name')
         )
 

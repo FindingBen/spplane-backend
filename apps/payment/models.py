@@ -7,7 +7,12 @@ from django.utils.text import slugify
 class SmsPackage(models.Model):
     package_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     merchant_profile = models.ForeignKey(
-        "accounts.ShopifyProfile",on_delete=models.CASCADE, related_name="sms_packages")
+        "accounts.ShopifyProfile",
+        on_delete=models.CASCADE,
+        related_name="sms_packages",
+        null=True,
+        blank=True,
+    )
     external_package_id = models.CharField(max_length=255, blank=True, db_index=True)
     shopify_product_id = models.CharField(max_length=255, blank=True, db_index=True)
     shopify_product_handle = models.CharField(max_length=255, blank=True, db_index=True)

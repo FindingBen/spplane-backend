@@ -27,7 +27,6 @@ class ShopifyOneTimeChargeViewSetTests(TestCase):
             access_token='test-token',
         )
         self.package = SmsPackage.objects.create(
-            merchant_profile=self.shopify_profile,
             external_package_id='starter',
             shopify_product_handle='basic-package',
             shopify_product_title='Basic plan',
@@ -176,7 +175,6 @@ class SmsPackageViewSetTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
         self.active_package = SmsPackage.objects.create(
-            merchant_profile=self.shopify_profile,
             external_package_id='starter',
             shopify_product_handle='basic-package',
             shopify_product_title='Basic plan',
@@ -187,7 +185,6 @@ class SmsPackageViewSetTests(TestCase):
             is_active=True,
         )
         SmsPackage.objects.create(
-            merchant_profile=self.shopify_profile,
             external_package_id='inactive-plan',
             name='Inactive topup',
             sms_count=50,
@@ -205,7 +202,7 @@ class SmsPackageViewSetTests(TestCase):
             is_active=True,
         )
 
-    def test_list_returns_only_active_packages_for_authenticated_shop(self):
+    def test_list_returns_global_packages_for_authenticated_shop(self):
         response = self.client.get('/api/payment/v1/sms-packages/')
 
         self.assertEqual(response.status_code, 200)
@@ -246,7 +243,6 @@ class ShopifyOneTimeChargeWebhookTests(TestCase):
             access_token='test-token',
         )
         self.package = SmsPackage.objects.create(
-            merchant_profile=self.shopify_profile,
             external_package_id='starter',
             name='Starter topup',
             sms_count=200,

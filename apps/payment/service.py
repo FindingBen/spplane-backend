@@ -7,7 +7,7 @@ import logging
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 from django.utils.text import slugify
 from apps.accounts.service import WalletTransactionService
@@ -265,14 +265,31 @@ class ShopifyBillingStateService:
 
 class SmsPackageService:
     @staticmethod
+    def get_available_packages_queryset(*, shopify_profile):
+        return (
+            SmsPackage.objects
+            .filter(is_active=True)
+            .filter(
+                Q(merchant_profile=shopify_profile)
+                | Q(merchant_profile__isnull=True)
+            )
+            .annotate(
+                scope_priority=Case(
+                    When(merchant_profile=shopify_profile, then=Value(0)),
+                    default=Value(1),
+                    output_field=IntegerField(),
+                )
+            )
+        )
+
+    @staticmethod
     def resolve_active_package(*, shopify_profile, package_identifier: str):
         normalized_identifier = (package_identifier or '').strip()
         if not normalized_identifier:
             return None
 
-        queryset = SmsPackage.objects.filter(
-            merchant_profile=shopify_profile,
-            is_active=True,
+        queryset = SmsPackageService.get_available_packages_queryset(
+            shopify_profile=shopify_profile,
         )
 
         direct_match_filters = (
@@ -288,7 +305,7 @@ class SmsPackageService:
         except (TypeError, ValueError, AttributeError):
             pass
 
-        package = queryset.filter(direct_match_filters).order_by('-updated_at').first()
+        package = queryset.filter(direct_match_filters).order_by('scope_priority', '-updated_at').first()
         if package is not None:
             return package
 
@@ -302,7 +319,7 @@ class SmsPackageService:
             'shopify_product_handle',
             'shopify_product_title',
             'name',
-        ).order_by('-updated_at'):
+        ).order_by('scope_priority', '-updated_at'):
             candidate_slugs = {
                 slugify(candidate.external_package_id or ''),
                 slugify(candidate.shopify_product_handle or ''),
