@@ -183,7 +183,7 @@ class ShopifyOneTimePaymentService:
                 "currencyCode": currency_code,
             },
             "returnUrl": return_url,
-            "test": True
+            "test": payment_data.get("test", False),
         }
 
         try:
