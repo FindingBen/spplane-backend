@@ -11,10 +11,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import ShopifyProfile
-from apps.payment.api.serializers import ShopifyOneTimeChargeSerializer
+from apps.payment.api.serializers import SmsPackageListSerializer, ShopifyOneTimeChargeSerializer
 from apps.payment.models import PaymentOrder, SmsPackage
 from apps.payment.service import (
     PaymentOrderService,
+    SmsPackageService,
     ShopifyBillingStateService,
     ShopifyOneTimePaymentService,
     ShopifyPaymentError,
@@ -61,18 +62,18 @@ class ShopifyOneTimeChargeViewSet(viewsets.GenericViewSet):
             if not eligibility.is_allowed:
                 return Response({'error': eligibility.reason}, status=status.HTTP_400_BAD_REQUEST)
 
-            package = (
-                SmsPackage.objects
-                .filter(
-                    package_id=serializer.validated_data['package_id'],
-                    merchant_profile=shopify_profile,
-                    is_active=True,
-                )
-                .first()
+            package = SmsPackageService.resolve_active_package(
+                shopify_profile=shopify_profile,
+                package_identifier=serializer.validated_data['package_id'],
             )
             if package is None:
                 return Response(
-                    {'error': 'SMS package was not found for this Shopify store.'},
+                    {
+                        'error': (
+                            'SMS package was not found for this Shopify store. '
+                            'Use the local package UUID or the configured external package key.'
+                        )
+                    },
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -111,6 +112,42 @@ class ShopifyOneTimeChargeViewSet(viewsets.GenericViewSet):
         payload['payment_order_id'] = str(payment_order.id)
         payload['return_token'] = str(payment_order.return_token)
         return Response(payload, status=status.HTTP_201_CREATED)
+
+
+class SmsPackageViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = SmsPackageListSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'head', 'options']
+
+    def get_queryset(self):
+        shopify_profile = (
+            ShopifyProfile.objects
+            .filter(user=self.request.user)
+            .first()
+        )
+        if shopify_profile is None:
+            return SmsPackage.objects.none()
+
+        return (
+            SmsPackage.objects
+            .filter(
+                merchant_profile=shopify_profile,
+                is_active=True,
+            )
+            .order_by('price', 'name')
+        )
+
+    def list(self, request, *_args, **_kwargs):
+        shopify_profile = ShopifyProfile.objects.filter(user=request.user).first()
+        if shopify_profile is None:
+            return Response(
+                {'error': 'Shopify store is not connected for this user.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 class ShopifyBillingCheckViewSet(viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]

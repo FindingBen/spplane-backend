@@ -162,7 +162,7 @@ mutation AppPurchaseOneTimeCreate(
   $name: String!
   $price: MoneyInput!
   $returnUrl: URL!
-  $test: Boolean = false
+  $test: Boolean = true
 ) {
   appPurchaseOneTimeCreate(
     name: $name

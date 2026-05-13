@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from apps.payment.api.views import (
+	SmsPackageViewSet,
 	ShopifyBillingCheckViewSet,
 	ShopifyOneTimeChargeViewSet,
 	ShopifyOneTimeChargeWebhookView,
@@ -9,6 +10,7 @@ from apps.payment.api.views import (
 
 
 router = DefaultRouter()
+router.register(r'v1/sms-packages', SmsPackageViewSet, basename='payment_sms_packages')
 router.register(r'v1/one-time-charges', ShopifyOneTimeChargeViewSet, basename='payment_one_time_charges')
 router.register(r'v1/billing-status', ShopifyBillingCheckViewSet, basename='payment_billing_status')
 

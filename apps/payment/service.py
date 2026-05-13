@@ -1,15 +1,19 @@
 from dataclasses import dataclass
 import hashlib
+from decimal import Decimal, InvalidOperation
+from uuid import UUID
 
 import logging
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
+from django.utils.text import slugify
 from apps.accounts.service import WalletTransactionService
 from apps.shopify.service import ShopifyGraphQLClient, ShopifyGraphQLError
 from apps.shopify.queries import CREATE_PURCHASED_CHARGE,GET_SHOP_BILLING_STATE
-from apps.payment.models import MerchantBillingState, PaymentOrder, WebhookEvent
+from apps.payment.models import MerchantBillingState, PaymentOrder, SmsPackage, WebhookEvent
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +146,18 @@ class PaymentEligibilityService:
 
 class ShopifyOneTimePaymentService:
     @staticmethod
+    def _normalize_amount(amount) -> str:
+        try:
+            normalized_amount = Decimal(str(amount))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ShopifyPaymentError('Amount must be a valid number.') from exc
+
+        if normalized_amount <= 0:
+            raise ShopifyPaymentError('Amount must be greater than zero.')
+
+        return format(normalized_amount, 'f')
+
+    @staticmethod
     def create_one_time_charge(shopify_profile, payment_data: dict) -> dict:
         """Creates onetime charge"""
         client = ShopifyGraphQLClient(
@@ -152,6 +168,7 @@ class ShopifyOneTimePaymentService:
         amount = payment_data.get("amount")
         if amount in (None, ""):
             raise ShopifyPaymentError("Amount is required to create a one-time charge.")
+        normalized_amount = ShopifyOneTimePaymentService._normalize_amount(amount)
 
         description = payment_data.get("description", "One-time purchase 200 credits")
         currency_code = payment_data.get("currency_code", "USD")
@@ -162,11 +179,11 @@ class ShopifyOneTimePaymentService:
         charge_data = {
             "name": description,
             "price": {
-                "amount": amount,
+                "amount": normalized_amount,
                 "currencyCode": currency_code,
             },
             "returnUrl": return_url,
-            "test": payment_data.get("test", False),
+            "test": True
         }
 
         try:
@@ -212,8 +229,8 @@ class ShopifyOneTimePaymentService:
 
     @staticmethod
     def verify_and_build_callback_url(shop_domain: str) -> str:
-        base_url = "https://spplane.app" if settings.ENVIRONMENT == "production" else "http://localhost:3000"
-        callback_url = f"{base_url}/shopify/one_time_charge/confirmation?shop={shop_domain}"
+        base_url = "https://spplane.app" if settings.ENVIRONMENT == "production" else "http://localhost:5173"
+        callback_url = f"{base_url}/sms-plans/callback/confirmation?shop={shop_domain}"
         return callback_url
     
 class ShopifyBillingStateService:
@@ -246,9 +263,63 @@ class ShopifyBillingStateService:
         return billing_state, eligibility
 
 
+class SmsPackageService:
+    @staticmethod
+    def resolve_active_package(*, shopify_profile, package_identifier: str):
+        normalized_identifier = (package_identifier or '').strip()
+        if not normalized_identifier:
+            return None
+
+        queryset = SmsPackage.objects.filter(
+            merchant_profile=shopify_profile,
+            is_active=True,
+        )
+
+        direct_match_filters = (
+            Q(external_package_id__iexact=normalized_identifier)
+            | Q(shopify_product_handle__iexact=normalized_identifier)
+            | Q(shopify_product_title__iexact=normalized_identifier)
+            | Q(shopify_product_id=normalized_identifier)
+            | Q(name__iexact=normalized_identifier)
+        )
+
+        try:
+            direct_match_filters |= Q(package_id=UUID(normalized_identifier))
+        except (TypeError, ValueError, AttributeError):
+            pass
+
+        package = queryset.filter(direct_match_filters).order_by('-updated_at').first()
+        if package is not None:
+            return package
+
+        identifier_slug = slugify(normalized_identifier)
+        if not identifier_slug:
+            return None
+
+        for candidate in queryset.only(
+            'package_id',
+            'external_package_id',
+            'shopify_product_handle',
+            'shopify_product_title',
+            'name',
+        ).order_by('-updated_at'):
+            candidate_slugs = {
+                slugify(candidate.external_package_id or ''),
+                slugify(candidate.shopify_product_handle or ''),
+                slugify(candidate.shopify_product_title or ''),
+                slugify(candidate.name or ''),
+            }
+            if identifier_slug in candidate_slugs:
+                return candidate
+
+        return None
+
+
 class PaymentOrderService:
     FINAL_WEBHOOK_STATUSES = {
         'ACTIVE': PaymentOrder.Status.SETTLED,
+        'CANCELED': PaymentOrder.Status.CANCELLED,
+        'CANCELLED': PaymentOrder.Status.CANCELLED,
         'DECLINED': PaymentOrder.Status.DECLINED,
         'EXPIRED': PaymentOrder.Status.CANCELLED,
         'PENDING': PaymentOrder.Status.PENDING,

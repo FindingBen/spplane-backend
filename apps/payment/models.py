@@ -1,12 +1,17 @@
 import uuid
 from django.db import models
 from django.utils import timezone
+from django.utils.text import slugify
 
 # Create your models here.
 class SmsPackage(models.Model):
     package_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     merchant_profile = models.ForeignKey(
         "accounts.ShopifyProfile",on_delete=models.CASCADE, related_name="sms_packages")
+    external_package_id = models.CharField(max_length=255, blank=True, db_index=True)
+    shopify_product_id = models.CharField(max_length=255, blank=True, db_index=True)
+    shopify_product_handle = models.CharField(max_length=255, blank=True, db_index=True)
+    shopify_product_title = models.CharField(max_length=255, blank=True)
     name = models.CharField(max_length=255)
     sms_count = models.IntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -14,6 +19,14 @@ class SmsPackage(models.Model):
     currency = models.CharField(max_length=10, default='USD')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if not self.external_package_id and self.name:
+            self.external_package_id = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.external_package_id or self.shopify_product_handle or self.name
 
 
 class MerchantBillingState(models.Model):
