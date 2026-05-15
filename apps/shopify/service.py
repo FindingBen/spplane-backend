@@ -20,6 +20,9 @@ from apps.shopify.queries import GET_CUSTOMERS_QUERY, GET_PRODUCT_QUERY, GET_PRO
 logger = logging.getLogger(__name__)
 
 
+CUSTOMER = 'Customer'
+PRODUCT = 'Product'
+
 class ShopifyGraphQLError(Exception):
     """Raised when Shopify GraphQL returns HTTP or top-level GraphQL errors."""
 
@@ -89,6 +92,54 @@ class ShopifyGraphQLClient:
 
         return body.get("data", {})
 
+
+class ShopifyMutualMethods:
+    """Shared utility methods for Shopify services."""
+    @staticmethod
+    def _parse_decimal(value):
+        if value in (None, ""):
+            return None
+
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _parse_int(value):
+        if value in (None, ""):
+            return None
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _parse_datetime(value):
+        if not value:
+            return None
+
+        return parse_datetime(value)
+    
+    @staticmethod
+    def _extract_webhook_id(payload: dict, shopify_type:str) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+
+        graphql_id = str(payload.get("admin_graphql_api_id") or "").strip()
+        if graphql_id:
+            return graphql_id
+
+        raw_id = payload.get("id")
+        if isinstance(raw_id, str) and raw_id.startswith("gid://"):
+            return raw_id.strip()
+
+        parsed_id = ShopifyMutualMethods._parse_int(raw_id)
+        if parsed_id is None:
+            return None
+
+        return f"gid://shopify/{shopify_type}/{parsed_id}"
 
 class ShopifyCustomerService:
     """
@@ -191,6 +242,7 @@ class ShopifyCustomerService:
             shopify_profile=shopify_profile,
             user=user,
             customers=customers,
+            mark_import_complete=True,
         )
 
     @staticmethod
@@ -332,6 +384,7 @@ class ShopifyCustomerService:
         shopify_profile,
         user,
         customers: list[dict],
+        mark_import_complete: bool = False,
     ) -> dict:
         timestamp = timezone.now()
         sanitized_customers = [
@@ -470,7 +523,7 @@ class ShopifyCustomerService:
             "links_updated": len(links_to_update),
         }
 
-        if failed_count == 0 and not shopify_profile.first_time_import_customers:
+        if mark_import_complete and failed_count == 0 and not shopify_profile.first_time_import_customers:
             shopify_profile.first_time_import_customers = True
             shopify_profile.save(update_fields=["first_time_import_customers"])
 
@@ -480,6 +533,48 @@ class ShopifyCustomerService:
             "results": results,
         }
 
+
+    @staticmethod
+    def sync_customer_from_webhook(shopify_profile, payload:dict) -> dict:
+        return ShopifyCustomerService.sync_customer(shopify_profile, payload)
+
+    @staticmethod
+    def _normalize_webhook_customer(payload: dict) -> dict:
+        customer_id = ShopifyMutualMethods._extract_webhook_id(payload, CUSTOMER)
+        if not customer_id:
+            raise ValueError("Webhook payload is missing a customer id.")
+
+        sms_marketing_consent = payload.get("sms_marketing_consent") or {}
+        default_address = payload.get("default_address") or {}
+        raw_phone = payload.get("phone") or default_address.get("phone") or ""
+        raw_marketing_state = (
+            sms_marketing_consent.get("state")
+            or payload.get("marketing_state")
+            or ("SUBSCRIBED" if payload.get("accepts_marketing") else "NONE")
+        )
+
+        return {
+            "id": customer_id,
+            "first_name": payload.get("first_name") or payload.get("firstName") or "",
+            "last_name": payload.get("last_name") or payload.get("lastName") or "",
+            "phone": str(raw_phone).strip() if raw_phone else "",
+            "marketing_state": str(raw_marketing_state).upper() if raw_marketing_state else "NONE",
+            "created_at": payload.get("created_at") or payload.get("createdAt"),
+            "updated_at": payload.get("updated_at") or payload.get("updatedAt"),
+            "email": payload.get("email"),
+        }
+
+    @staticmethod
+    def sync_customer(shopify_profile, payload: dict) -> dict:
+        normalized_customer = ShopifyCustomerService._normalize_webhook_customer(payload)
+        transaction_response = ShopifyCustomerService._import_fetched_customers(
+            shopify_profile=shopify_profile,
+            user=shopify_profile.user,
+            customers=[normalized_customer],
+            mark_import_complete=False,
+        )
+        return transaction_response
+        
 
 class ShopifyProductService:
     """Product-specific Shopify operations backed by the local catalog projection."""
@@ -549,7 +644,7 @@ class ShopifyProductService:
 
     @staticmethod
     def sync_product_from_webhook(shopify_profile, payload: dict) -> dict:
-        product_id = ShopifyProductService._extract_webhook_product_id(payload)
+        product_id = ShopifyMutualMethods._extract_webhook_id(payload, PRODUCT)
         if not product_id:
             raise ValueError("Webhook payload is missing a product id.")
 
@@ -564,7 +659,7 @@ class ShopifyProductService:
 
     @staticmethod
     def delete_product_from_webhook(shopify_profile, payload: dict) -> dict:
-        product_id = ShopifyProductService._extract_webhook_product_id(payload)
+        product_id = ShopifyMutualMethods._extract_webhook_id(payload, PRODUCT)
         if not product_id:
             raise ValueError("Webhook payload is missing a product id.")
 
@@ -772,11 +867,11 @@ class ShopifyProductService:
             "total_inventory": product.get("totalInventory"),
             "has_out_of_stock_variants": product.get("hasOutOfStockVariants") or False,
             "is_gift_card": product.get("isGiftCard") or False,
-            "variant_count": ShopifyProductService._parse_int(variants_count.get("count")) or len(variants),
+            "variant_count": ShopifyMutualMethods._parse_int(variants_count.get("count")) or len(variants),
             "media_count": len(media),
-            "published_at": ShopifyProductService._parse_datetime(product.get("publishedAt")),
-            "shopify_created_at": ShopifyProductService._parse_datetime(product.get("createdAt")),
-            "shopify_updated_at": ShopifyProductService._parse_datetime(product.get("updatedAt")),
+            "published_at": ShopifyMutualMethods._parse_datetime(product.get("publishedAt")),
+            "shopify_created_at": ShopifyMutualMethods._parse_datetime(product.get("createdAt")),
+            "shopify_updated_at": ShopifyMutualMethods._parse_datetime(product.get("updatedAt")),
             "variants": variants,
             "media": media,
             "raw_payload": product,
@@ -797,8 +892,8 @@ class ShopifyProductService:
                     "id": variant_id,
                     "title": node.get("title") or "",
                     "sku": node.get("sku") or "",
-                    "price_amount": ShopifyProductService._parse_decimal(node.get("price")),
-                    "inventory_quantity": ShopifyProductService._parse_int(node.get("inventoryQuantity")),
+                    "price_amount": ShopifyMutualMethods._parse_decimal(node.get("price")),
+                    "inventory_quantity": ShopifyMutualMethods._parse_int(node.get("inventoryQuantity")),
                     "position": index,
                     "shopify_image_id": image.get("id") or "",
                     "featured_image_url": image.get("url") or "",
@@ -832,8 +927,8 @@ class ShopifyProductService:
                     "preview_image_url": source_url,
                     "mime_type": "",
                     "position": index,
-                    "width": ShopifyProductService._parse_int(image.get("width")),
-                    "height": ShopifyProductService._parse_int(image.get("height")),
+                    "width": ShopifyMutualMethods._parse_int(image.get("width")),
+                    "height": ShopifyMutualMethods._parse_int(image.get("height")),
                     "raw_payload": node,
                 }
             )
@@ -1145,48 +1240,4 @@ class ShopifyProductService:
             ],
         }
 
-    @staticmethod
-    def _parse_decimal(value):
-        if value in (None, ""):
-            return None
 
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _parse_int(value):
-        if value in (None, ""):
-            return None
-
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @staticmethod
-    def _parse_datetime(value):
-        if not value:
-            return None
-
-        return parse_datetime(value)
-
-    @staticmethod
-    def _extract_webhook_product_id(payload: dict) -> str | None:
-        if not isinstance(payload, dict):
-            return None
-
-        graphql_id = str(payload.get("admin_graphql_api_id") or "").strip()
-        if graphql_id:
-            return graphql_id
-
-        raw_id = payload.get("id")
-        if isinstance(raw_id, str) and raw_id.startswith("gid://"):
-            return raw_id.strip()
-
-        parsed_id = ShopifyProductService._parse_int(raw_id)
-        if parsed_id is None:
-            return None
-
-        return f"gid://shopify/Product/{parsed_id}"

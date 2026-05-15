@@ -17,7 +17,7 @@ from apps.shopify.models import (
     ShopifyProductMedia,
     ShopifyProductVariant,
 )
-from apps.shopify.service import ShopifyCustomerService
+from apps.shopify.service import ShopifyCustomerService, ShopifyGraphQLError
 
 
 class ShopifyCustomerImportViewTests(TestCase):
@@ -180,6 +180,101 @@ class ShopifyCustomerImportViewTests(TestCase):
         self.assertEqual(import_response.status_code, 200)
         self.assertEqual(me_after_response.status_code, 200)
         self.assertTrue(me_after_response.json()["first_time_import_customers"])
+
+
+@override_settings(SHOPIFY_API_SECRET="webhook-secret")
+class ShopifyCustomerWebhookViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="customer-webhook-merchant@example.com",
+            password="password123",
+            user_type="shopify",
+            is_active=True,
+        )
+        self.shopify_profile = ShopifyProfile.objects.create(
+            user=self.user,
+            shop_domain="customers.myshopify.com",
+            access_token="customer-token",
+        )
+        self.client = APIClient()
+
+    @staticmethod
+    def _signed_request_body(payload: dict) -> tuple[bytes, str]:
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        digest = hmac.new(b"webhook-secret", body, hashlib.sha256).digest()
+        return body, base64.b64encode(digest).decode("utf-8")
+
+    @staticmethod
+    def _webhook_payload(customer_id: int, *, phone: str = "+15550000070", email: str = "ada@example.com"):
+        return {
+            "id": customer_id,
+            "admin_graphql_api_id": f"gid://shopify/Customer/{customer_id}",
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "email": email,
+            "phone": phone,
+            "sms_marketing_consent": {"state": "subscribed"},
+        }
+
+    def test_customer_create_webhook_syncs_customer_without_completing_full_import(self):
+        request_body, request_hmac = self._signed_request_body(self._webhook_payload(7))
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/customers/customer_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+        self.shopify_profile.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(self.shopify_profile.first_time_import_customers)
+        contact = Contact.objects.get(users=self.user, phone="+15550000070")
+        link = ShopifyCustomerLink.objects.get(
+            shopify_profile=self.shopify_profile,
+            shopify_customer_id="gid://shopify/Customer/7",
+        )
+        self.assertEqual(contact.first_name, "Ada")
+        self.assertEqual(link.contact_id, contact.id)
+        self.assertNotIn("email", contact.custom_attributes)
+        self.assertNotIn("email", link.raw_payload)
+        self.assertFalse(response.json()["first_time_import_customers"])
+        self.assertEqual(response.json()["summary"]["imported"], 1)
+        self.assertEqual(response.json()["results"][0]["status"], "imported")
+
+    def test_customer_create_webhook_returns_400_for_missing_customer_id(self):
+        request_body, request_hmac = self._signed_request_body({"first_name": "Broken"})
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/customers/customer_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "Webhook payload is missing a customer id.")
+
+    @patch("apps.shopify.apis.views.ShopifyCustomerService.sync_customer_from_webhook", return_value=None)
+    def test_customer_create_webhook_returns_500_for_invalid_handler_response(self, sync_customer_mock):
+        request_body, request_hmac = self._signed_request_body(self._webhook_payload(8))
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/customers/customer_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["error"], "Webhook handler returned an invalid response.")
+        self.assertEqual(sync_customer_mock.call_count, 1)
 
 
 class ShopifyCatalogModelTests(TestCase):
@@ -734,3 +829,26 @@ class ShopifyProductWebhookViewTests(TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"], "Invalid HMAC signature.")
         self.assertEqual(execute_mock.call_count, 0)
+
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_create_product_webhook_returns_502_when_graphql_sync_fails(self, execute_mock):
+        execute_mock.side_effect = ShopifyGraphQLError("Shopify GraphQL error: upstream failure")
+        request_body, request_hmac = self._signed_request_body(
+            {
+                "id": 4,
+                "admin_graphql_api_id": "gid://shopify/Product/4",
+                "title": "Broken Product",
+            }
+        )
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/products/product_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"], "Shopify GraphQL error: upstream failure")

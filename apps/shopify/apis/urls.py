@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.shopify.apis.views import (
+	ShopifyCustomerCreateWebhookView,
     ShopifyCustomerImportView,
     ShopifyCustomerListView,
 	ShopifyProductCreateWebhookView,
@@ -14,6 +15,7 @@ from apps.shopify.apis.views import (
 urlpatterns = [
 	path("customers/", ShopifyCustomerListView.as_view()),
 	path("customers/import/", ShopifyCustomerImportView.as_view()),
+	path("customers/customer_webhook", ShopifyCustomerCreateWebhookView.as_view()),
 	path("products/", ShopifyProductListView.as_view()),
 	path("products/import/", ShopifyProductImportView.as_view()),
 	path("products/product_webhook", ShopifyProductCreateWebhookView.as_view()),

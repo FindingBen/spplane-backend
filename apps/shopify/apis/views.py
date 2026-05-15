@@ -37,7 +37,7 @@ def _verify_shopify_webhook_hmac(raw_body: bytes, received_hmac: str) -> bool:
     return hmac.compare_digest(expected_hmac, received_hmac)
 
 
-def _handle_product_webhook(request, *, log_prefix: str, handler):
+def _handle_shopify_webhook(request, *, log_prefix: str, handler):
     raw_body = request.body
     shop_domain = request.headers.get("X-Shopify-Shop-Domain", "").strip().lower()
     received_hmac = request.headers.get("X-Shopify-Hmac-Sha256", "").strip()
@@ -57,12 +57,28 @@ def _handle_product_webhook(request, *, log_prefix: str, handler):
 
     try:
         payload = handler(shopify_profile, request.data)
-    except ValueError:
-        logger.warning("%s: missing product id for %s", log_prefix, shop_domain)
-        return Response(status=status.HTTP_200_OK)
-    except ShopifyGraphQLError:
-        logger.exception("%s: failed to sync product for %s", log_prefix, shop_domain)
-        return Response(status=status.HTTP_200_OK)
+    except ValueError as exc:
+        logger.warning("%s: invalid webhook payload for %s: %s", log_prefix, shop_domain, exc)
+        return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except ShopifyGraphQLError as exc:
+        logger.exception("%s: failed to process webhook for %s", log_prefix, shop_domain)
+        return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    if not isinstance(payload, dict):
+        logger.error(
+            "%s: webhook handler returned %s for %s",
+            log_prefix,
+            type(payload).__name__,
+            shop_domain,
+        )
+        return Response(
+            {"error": "Webhook handler returned an invalid response."},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+    if payload.get("error") or payload.get("errors"):
+        logger.error("%s: webhook handler returned an error payload for %s: %s", log_prefix, shop_domain, payload)
+        return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     return Response(payload, status=status.HTTP_200_OK)
 
@@ -166,13 +182,25 @@ class ShopifyProductImportView(APIView):
 
         return Response(payload, status=status.HTTP_200_OK)
 
+class ShopifyCustomerCreateWebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        # For simplicity, we can reuse the same handler for create and update webhooks,
+        # since the logic to sync the customer is the same in both cases.
+        return _handle_shopify_webhook(
+            request,
+            log_prefix="ShopifyCustomerCreateWebhook",
+            handler=ShopifyCustomerService.sync_customer_from_webhook,
+        )
 
 class ShopifyProductCreateWebhookView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
 
     def post(self, request):
-        return _handle_product_webhook(
+        return _handle_shopify_webhook(
             request,
             log_prefix="ShopifyProductCreateWebhook",
             handler=ShopifyProductService.sync_product_from_webhook,
@@ -184,7 +212,7 @@ class ShopifyProductUpdateWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        return _handle_product_webhook(
+        return _handle_shopify_webhook(
             request,
             log_prefix="ShopifyProductUpdateWebhook",
             handler=ShopifyProductService.sync_product_from_webhook,
@@ -196,7 +224,7 @@ class ShopifyProductDeleteWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        return _handle_product_webhook(
+        return _handle_shopify_webhook(
             request,
             log_prefix="ShopifyProductDeleteWebhook",
             handler=ShopifyProductService.delete_product_from_webhook,
