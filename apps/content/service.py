@@ -442,85 +442,109 @@ class ProductContentGenerationService:
 
             if block_type in ('image', 'image-hero') or 'hero-image' in descriptor:
                 ProductContentGenerationService._set_image_props(props, hero_image)
+                if hero_image:
+                    props['visible'] = True
 
             if any(keyword in descriptor for keyword in ('gallery', 'carousel', 'media-grid')):
                 ProductContentGenerationService._set_list_props(props, gallery_items, ['images', 'items', 'slides'])
+                if gallery_items:
+                    props['visible'] = True
                 applied_flags['gallery'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('urgency', 'inventory', 'stock', 'scarcity')):
+                urgency_text = copy_payload.urgency_message or rule_analysis.get('urgency_message') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.urgency_message or rule_analysis.get('urgency_message') or '',
+                    urgency_text,
                     ['text', 'content', 'description', 'subtitle'],
                 )
-                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_urgency'))
+                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_urgency')) or bool(urgency_text)
                 applied_flags['urgency'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('bundle', 'variant', 'option')):
+                bundle_text = copy_payload.bundle_headline or 'Choose your preferred option'
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.bundle_headline or 'Choose your preferred option',
+                    bundle_text,
                     ['title', 'headline', 'heading', 'text'],
                 )
                 ProductContentGenerationService._set_list_props(props, variant_items, ['items', 'variants', 'options'])
-                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_bundle'))
+                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_bundle')) or bool(variant_items)
                 applied_flags['bundle'] = True
                 continue
 
             if 'price' in descriptor:
+                price_text = copy_payload.price_caption or rule_analysis.get('price_label') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.price_caption or rule_analysis.get('price_label') or '',
+                    price_text,
                     ['text', 'price', 'content', 'label'],
                 )
+                if price_text:
+                    props['visible'] = True
                 applied_flags['price'] = True
                 continue
 
             if block_type == 'cta' or any(keyword in descriptor for keyword in ('cta', 'button', 'buy', 'shop')):
+                cta_text = copy_payload.cta_label or 'Shop now'
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.cta_label or 'Shop now',
+                    cta_text,
                     ['label', 'text', 'title'],
                 )
                 ProductContentGenerationService._set_url_props(
                     props,
                     product_data.get('product_url') or '',
                 )
+                if cta_text or product_data.get('product_url'):
+                    props['visible'] = True
                 applied_flags['cta'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('subtitle', 'subheadline', 'tagline')):
+                subtitle_text = copy_payload.hero_subtitle or copy_payload.tag_line or product_data.get('seo_description') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.hero_subtitle or copy_payload.tag_line or product_data.get('seo_description') or '',
+                    subtitle_text,
                     ['subtitle', 'subheading', 'text', 'content'],
                 )
+                if subtitle_text:
+                    props['visible'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('benefit', 'feature')):
+                benefits = copy_payload.benefit_bullets
                 ProductContentGenerationService._set_list_props(
                     props,
-                    copy_payload.benefit_bullets,
+                    benefits,
                     ['items', 'benefits', 'bullets'],
                 )
+                if benefits:
+                    props['visible'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('description', 'body', 'copy', 'details')):
+                desc_text = copy_payload.pain_point or product_data.get('description_text') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.pain_point or product_data.get('description_text') or '',
+                    desc_text,
                     ['text', 'content', 'description', 'body'],
                 )
+                if desc_text:
+                    props['visible'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('title', 'headline', 'hero')):
+                title_text = copy_payload.hero_title or product_data.get('title') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
-                    copy_payload.hero_title or product_data.get('title') or '',
+                    title_text,
                     ['title', 'headline', 'heading', 'text'],
                 )
+                if title_text:
+                    props['visible'] = True
 
         for placeholder, applied in applied_flags.items():
             if not applied and rule_analysis.get('blocks', {}).get(f'show_{placeholder}'):
