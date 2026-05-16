@@ -539,6 +539,19 @@ class ShopifyCustomerService:
         return ShopifyCustomerService.sync_customer(shopify_profile, payload)
 
     @staticmethod
+    def delete_customer_from_webhook(shopify_profile, payload:dict) -> dict:
+        customer_id = ShopifyMutualMethods._extract_webhook_id(payload, CUSTOMER)
+        return ShopifyCustomerService.delete_customer(shopify_profile, customer_id)
+
+    @staticmethod
+    def update_customer_from_webhook(shopify_profile, payload:dict) -> dict:
+        customer_id = ShopifyMutualMethods._extract_webhook_id(payload, CUSTOMER)
+        if not customer_id:
+            raise ValueError("Webhook payload is missing a customer id.")
+        return ShopifyCustomerService.update_customer(shopify_profile, payload)
+    
+
+    @staticmethod
     def _normalize_webhook_customer(payload: dict) -> dict:
         customer_id = ShopifyMutualMethods._extract_webhook_id(payload, CUSTOMER)
         if not customer_id:
@@ -574,6 +587,62 @@ class ShopifyCustomerService:
             mark_import_complete=False,
         )
         return transaction_response
+    
+    @staticmethod
+    @transaction.atomic
+    def update_customer(shopify_profile, payload:dict) -> dict:
+
+        shopify_customer = ShopifyCustomerLink.objects.filter(
+            shopify_profile=shopify_profile,shopify_customer_id=ShopifyMutualMethods._extract_webhook_id(payload, CUSTOMER)).first()
+        
+        shopify_customer.first_name = payload.get("first_name") or payload.get("firstName") or shopify_customer.first_name
+        shopify_customer.last_name = payload.get("last_name") or payload.get("lastName") or shopify_customer.last_name
+        raw_phone = payload.get("phone") or shopify_customer.phone_snapshot
+        shopify_customer.phone_snapshot = str(raw_phone).strip() if raw_phone else shopify_customer.phone_snapshot
+        shopify_customer.save(update_fields=["first_name", "last_name", "phone_snapshot", "updated_at"])
+        customer = shopify_customer.contact
+        if customer:
+            customer.first_name = shopify_customer.first_name
+            customer.last_name = shopify_customer.last_name
+            customer.phone = shopify_customer.phone_snapshot
+            customer.save(update_fields=["first_name", "last_name", "phone", "updated_at"])
+
+        return {
+            "status": "updated",
+            "shopify_customer_id": shopify_customer.shopify_customer_id,
+            "contact_id": customer.id if customer else None,
+        }
+
+    @staticmethod
+    @transaction.atomic
+    def delete_customer(shopify_profile, shopify_customer_id: str) -> dict:
+        shopify_link = ShopifyCustomerLink.objects.filter(
+            shopify_profile=shopify_profile,
+            shopify_customer_id=shopify_customer_id,
+            deleted_at__isnull=True,
+        ).first()
+
+        if shopify_link is None:
+            return {
+                "status": "missing",
+                "shopify_customer_id": shopify_customer_id,
+                "reason": "No linked contact found for this customer.",
+            }
+
+        customer = shopify_link.contact
+        if customer is not None:
+            customer.status = "opted_out"
+            customer.opted_out_at = timezone.now()
+            customer.save(update_fields=["status", "opted_out_at", "updated_at"])
+
+        shopify_link.deleted_at = timezone.now()
+        shopify_link.save(update_fields=["deleted_at", "updated_at"])
+
+        return {
+            "status": "deleted",
+            "shopify_customer_id": shopify_customer_id,
+            "contact_id": customer.id if customer else None,
+        }
         
 
 class ShopifyProductService:

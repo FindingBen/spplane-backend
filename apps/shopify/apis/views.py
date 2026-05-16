@@ -195,6 +195,13 @@ class ShopifyCustomerCreateWebhookView(APIView):
             handler=ShopifyCustomerService.sync_customer_from_webhook,
         )
 
+class ShopifyCustomerUpdateWebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        return _handle_shopify_webhook(request, log_prefix="ShopifyCustomerUpdateWebhook", handler=ShopifyCustomerService.update_customer_from_webhook)
+
 class ShopifyProductCreateWebhookView(APIView):
     authentication_classes = []
     permission_classes = [AllowAny]
@@ -206,6 +213,16 @@ class ShopifyProductCreateWebhookView(APIView):
             handler=ShopifyProductService.sync_product_from_webhook,
         )
 
+class ShopifyCustomerDeleteWebhookView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        return _handle_shopify_webhook(
+            request,
+            log_prefix="ShopifyCustomerDeleteWebhook",
+            handler=ShopifyCustomerService.delete_customer_from_webhook,
+        )
 
 class ShopifyProductUpdateWebhookView(APIView):
     authentication_classes = []

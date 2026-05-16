@@ -276,6 +276,48 @@ class ShopifyCustomerWebhookViewTests(TestCase):
         self.assertEqual(response.json()["error"], "Webhook handler returned an invalid response.")
         self.assertEqual(sync_customer_mock.call_count, 1)
 
+    @patch("apps.shopify.service.ShopifyGraphQLClient.execute")
+    def test_delete_customer_webhook(self, execute_mock):
+        customer = Contact.objects.create(
+            users=self.user,
+            first_name="Delete",
+            last_name="Me",
+            phone="+15550000080",
+        )
+        link = ShopifyCustomerLink.objects.create(
+            shopify_profile=self.shopify_profile,
+            shopify_customer_id="gid://shopify/Customer/8",
+            contact=customer,
+            raw_payload={"id": "gid://shopify/Customer/8"},
+        )
+        request_body, request_hmac = self._signed_request_body(
+            {
+                "id": 8,
+                "admin_graphql_api_id": "gid://shopify/Customer/8",
+                "first_name": "Delete",
+                "last_name": "Me",
+                "phone": "+15550000080",
+            }
+        )
+
+        response = self.client.generic(
+            "POST",
+            "/api/shopify/customers/customer_delete_webhook",
+            request_body,
+            content_type="application/json",
+            HTTP_X_SHOPIFY_HMAC_SHA256=request_hmac,
+            HTTP_X_SHOPIFY_SHOP_DOMAIN=self.shopify_profile.shop_domain,
+        )
+        customer.refresh_from_db()
+        link.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(customer.status, "opted_out")
+        self.assertIsNotNone(customer.opted_out_at)
+        self.assertIsNotNone(link.deleted_at)
+        self.assertEqual(response.json().get("status"), "deleted")
+        self.assertEqual(response.json().get("shopify_customer_id"), "gid://shopify/Customer/8")
+        self.assertEqual(response.json().get("contact_id"), customer.id)
 
 class ShopifyCatalogModelTests(TestCase):
     def setUp(self):
