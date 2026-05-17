@@ -17,5 +17,6 @@ class Content(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     template = models.ForeignKey(Template, on_delete=models.PROTECT)  # Always has a template
     structure = models.JSONField()  # Final customized version
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True, unique=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

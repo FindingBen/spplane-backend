@@ -2,6 +2,8 @@ import copy
 import logging
 import os
 import uuid
+import hashlib
+import json
 from decimal import Decimal, InvalidOperation
 
 from apps.content.models import Template, Content
@@ -9,6 +11,7 @@ from apps.content.llm import ProductCopyPayload, build_llm_client
 from apps.content.rules import ProductRuleEngine
 from apps.shopify.models import ShopifyProduct as Sh
 from django.core.exceptions import ValidationError
+from django.db import transaction, IntegrityError
 from django.core.files.storage import default_storage
 from django.utils.html import strip_tags
 
@@ -21,14 +24,49 @@ DEFAULT_PRODUCT_CONTENT_TEMPLATE_ID = 1
 class ContentService:
     @staticmethod
     def create_content(user, template_id, structure, files=None):
-        """Create content from template"""
         upload_payload = ContentService.upload_content(user, template_id, structure, files=files)
 
-        content = Content.objects.create(
-            user=user,
-            template=upload_payload['template'],
-            structure=upload_payload['structure']
-        )
+        # Prefer idempotent lookup using generation_metadata.idempotency_key
+        # when present. Use DB-backed uniqueness to avoid race conditions.
+        existing = None
+        try:
+            struct = upload_payload.get('structure') or {}
+            gen_meta = struct.get('generation_metadata') if isinstance(struct, dict) else None
+            idempotency_key = gen_meta.get('idempotency_key') if isinstance(gen_meta, dict) else None
+        except Exception:
+            idempotency_key = None
+
+        if idempotency_key:
+            try:
+                # Use atomic get_or_create to prevent duplicates under concurrency.
+                with transaction.atomic():
+                    content, created = Content.objects.get_or_create(
+                        idempotency_key=idempotency_key,
+                        defaults={
+                            'user': user,
+                            'template': upload_payload['template'],
+                            'structure': upload_payload['structure'],
+                        },
+                    )
+                    return content
+            except IntegrityError:
+                # Another process created it concurrently — fetch it now.
+                existing = Content.objects.filter(idempotency_key=idempotency_key).first()
+
+        if existing is None:
+            existing = Content.objects.filter(user=user, structure=upload_payload['structure']).first()
+        if existing is not None:
+            return existing
+
+        content_kwargs = {
+            'user': user,
+            'template': upload_payload['template'],
+            'structure': upload_payload['structure'],
+        }
+        if idempotency_key:
+            content_kwargs['idempotency_key'] = idempotency_key
+
+        content = Content.objects.create(**content_kwargs)
 
         return content
 
@@ -72,6 +110,14 @@ class ContentService:
     def get_user_contents(user):
         """Get all content for a user"""
         return Content.objects.filter(user=user)
+
+    @staticmethod
+    def delete_content(content, user=None):
+        """Delete a Content record, enforcing ownership when a user is provided."""
+        if user is not None and content.user != user:
+            raise ValidationError("You don't have permission to delete this content.")
+
+        content.delete()
 
     @staticmethod
     def _validate_template_exists(template_id):
@@ -238,6 +284,7 @@ class ProductContentGenerationService:
             rule_analysis=rule_analysis,
             template_structure=template.structure,
         )
+
         generated_structure = ProductContentGenerationService._populate_template_structure(
             template_structure=template.structure,
             product_data=normalized_data,
@@ -246,13 +293,47 @@ class ProductContentGenerationService:
             llm_provider=llm_client.provider_name,
         )
 
+        # Compute an idempotency key from the product, template and the LLM copy
+        # payload so repeated generation calls produce the same key and can be
+        # deduplicated even when injected component ids differ.
+        try:
+            copy_dict = copy_payload.model_dump() if hasattr(copy_payload, 'model_dump') else dict(copy_payload or {})
+        except Exception:
+            copy_dict = {}
+
+        hash_input = {
+            'user_id': getattr(user, 'id', None),
+            'product_id': normalized_data.get('id'),
+            'template_id': template.id,
+            'llm_provider': llm_client.provider_name,
+            'copy': {
+                'hero_title': copy_dict.get('hero_title'),
+                'hero_subtitle': copy_dict.get('hero_subtitle'),
+                'pain_point': copy_dict.get('pain_point'),
+                'benefit_bullets': copy_dict.get('benefit_bullets'),
+                'cta_label': copy_dict.get('cta_label'),
+                'urgency_message': copy_dict.get('urgency_message'),
+                'bundle_headline': copy_dict.get('bundle_headline'),
+                'bundle_items': copy_dict.get('bundle_items'),
+                'price_caption': copy_dict.get('price_caption'),
+                'tag_line': copy_dict.get('tag_line'),
+            }
+        }
+
+        # Allow non-JSON-native values (UUID, Decimal, etc.) to be
+        # deterministically stringified when computing the hash.
+        idempotency_key = hashlib.sha256(
+            json.dumps(hash_input, sort_keys=True, ensure_ascii=False, default=str).encode('utf-8')
+        ).hexdigest()
+        generated_structure.setdefault('generation_metadata', {})['idempotency_key'] = idempotency_key
+        logger.debug('Generated structure idempotency_key set')
         content = None
-        if persist:
-            content = ContentService.create_content(
-                user=user,
-                template_id=template.id,
-                structure=generated_structure,
-            )
+        # if persist:
+        #     content = ContentService.create_content(
+        #         user=user,
+        #         template_id=template.id,
+        #         structure=generated_structure,
+        #     )
 
         return {
             'content': content,
@@ -409,22 +490,136 @@ class ProductContentGenerationService:
             structure['components'] = components
 
         hero_image = product_data.get('featured_image_url') or ''
-        product_images = [hero_image] + [
-            image_url
-            for image_url in product_data.get('images') or []
-            if image_url and image_url != hero_image
-        ]
+        
         gallery_items = rule_analysis.get('gallery_items') or []
         variant_items = rule_analysis.get('variant_items') or []
         missing_placeholders = []
+
+        # Track which placeholders already exist in the template copy
         applied_flags = {
             'gallery': False,
             'urgency': False,
             'bundle': False,
             'price': False,
             'cta': False,
+            'title': False,
+            'subtitle': False,
+            'benefits': False,
+            'description': False,
+            'tagline': False,
         }
 
+        # Quick scan to mark which placeholders are already present
+        for index, component in enumerate(components):
+            if not isinstance(component, dict):
+                continue
+
+            block_type = (component.get('type') or '').lower()
+            block_id = (component.get('id') or f'component_{index}').lower()
+            descriptor = f'{block_id} {block_type}'
+
+            if any(keyword in descriptor for keyword in ('gallery', 'carousel', 'media-grid')):
+                applied_flags['gallery'] = True
+            if any(keyword in descriptor for keyword in ('urgency', 'inventory', 'stock', 'scarcity')):
+                applied_flags['urgency'] = True
+            if any(keyword in descriptor for keyword in ('bundle', 'variant', 'option')):
+                applied_flags['bundle'] = True
+            if 'price' in descriptor:
+                applied_flags['price'] = True
+            if block_type == 'cta' or any(keyword in descriptor for keyword in ('cta', 'button', 'buy', 'shop')):
+                applied_flags['cta'] = True
+            if any(keyword in descriptor for keyword in ('title', 'headline', 'hero')):
+                applied_flags['title'] = True
+            if any(keyword in descriptor for keyword in ('subtitle', 'subheadline', 'tagline')):
+                applied_flags['subtitle'] = True
+            if any(keyword in descriptor for keyword in ('benefit', 'feature', 'list', 'bullets')):
+                applied_flags['benefits'] = True
+            if any(keyword in descriptor for keyword in ('description', 'body', 'details', 'copy')):
+                applied_flags['description'] = True
+            if any(keyword in descriptor for keyword in ('tag', 'tagline')):
+                applied_flags['tagline'] = True
+
+        # Normalize the pydantic payload into a dict
+        if hasattr(copy_payload, 'model_dump'):
+            payload_dict = copy_payload.model_dump()
+        else:
+            payload_dict = dict(copy_payload or {})
+
+        def _add_component(type_, props, id_prefix):
+            print('ADDING',type_,props)
+            comp_id = f'injected_{id_prefix}_{uuid.uuid4().hex[:8]}'
+            components.append({'id': comp_id, 'type': type_, 'props': props})
+            return comp_id
+
+        hero_title = (payload_dict.get('hero_title') or '').strip()
+        hero_subtitle = (payload_dict.get('hero_subtitle') or payload_dict.get('tag_line') or '').strip()
+        if (hero_title or hero_subtitle) and not (applied_flags['title'] or applied_flags['subtitle']):
+            props = {}
+            if hero_title:
+                props['title'] = hero_title
+            if hero_subtitle:
+                props['subtitle'] = hero_subtitle
+            if hero_image:
+                props['fallbackImage'] = hero_image
+            props['visible'] = True
+            _add_component('hero', props, 'hero')
+
+        # Inject description / pain point
+        pain_point = (payload_dict.get('pain_point') or '').strip()
+        if pain_point and not applied_flags['description']:
+            _add_component('text-desc', {'text': pain_point, 'visible': True}, 'description')
+
+        # Inject benefits list
+        benefits = payload_dict.get('benefit_bullets') or []
+        if benefits and not applied_flags['benefits']:
+            _add_component('list', {'items': benefits, 'visible': True}, 'benefits')
+
+        # Inject CTA
+        cta_label = (payload_dict.get('cta_label') or '').strip()
+        product_url = product_data.get('product_url') or ''
+        if (cta_label or product_url) and not applied_flags['cta']:
+            props = {}
+            if cta_label:
+                props['label'] = cta_label
+            if product_url:
+                props['url'] = product_url
+            props['visible'] = True
+            _add_component('cta', props, 'cta')
+
+        # Inject urgency
+        urgency_text = (payload_dict.get('urgency_message') or rule_analysis.get('urgency_message') or '').strip()
+        if urgency_text and not applied_flags['urgency']:
+            _add_component('urgency_text', {'text': urgency_text, 'visible': True}, 'urgency')
+
+        # Inject bundle / variant options
+        bundle_items = payload_dict.get('bundle_items') or []
+        bundle_headline = payload_dict.get('bundle_headline')
+        if not bundle_items and variant_items:
+            bundle_items = [item.get('title') for item in variant_items if item.get('title')]
+        if (bundle_items or bundle_headline) and not applied_flags['bundle']:
+            props = {}
+            if bundle_headline:
+                props['heading'] = bundle_headline
+            if bundle_items:
+                props['items'] = bundle_items
+            props['visible'] = True
+            _add_component('product-bundle', props, 'bundle')
+
+
+        price_caption = (payload_dict.get('price_caption') or '').strip()
+        if price_caption and not applied_flags['price']:
+            _add_component('price', {'price': price_caption, 'visible': True}, 'price')
+
+        # Inject tagline if provided
+        tag_line = (payload_dict.get('tag_line') or '').strip()
+        if tag_line and not (applied_flags['subtitle'] or applied_flags['tagline']):
+            _add_component('text-tag', {'text': tag_line, 'visible': True}, 'tagline')
+
+        # Inject gallery if rule provided images
+        if gallery_items and not applied_flags['gallery']:
+            _add_component('gallery', {'images': gallery_items, 'items': gallery_items, 'visible': True}, 'gallery')
+
+        # Now populate all components (including injected ones) using existing population logic
         for index, component in enumerate(components):
             if not isinstance(component, dict):
                 continue
@@ -453,30 +648,30 @@ class ProductContentGenerationService:
                 continue
 
             if any(keyword in descriptor for keyword in ('urgency', 'inventory', 'stock', 'scarcity')):
-                urgency_text = copy_payload.urgency_message or rule_analysis.get('urgency_message') or ''
+                urgency_text_local = payload_dict.get('urgency_message') or rule_analysis.get('urgency_message') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
-                    urgency_text,
+                    urgency_text_local,
                     ['text', 'content', 'description', 'subtitle'],
                 )
-                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_urgency')) or bool(urgency_text)
+                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_urgency')) or bool(urgency_text_local)
                 applied_flags['urgency'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('bundle', 'variant', 'option')):
-                bundle_text = copy_payload.bundle_headline or 'Choose your preferred option'
+                bundle_text = payload_dict.get('bundle_headline') or 'Choose your preferred option'
                 ProductContentGenerationService._set_text_props(
                     props,
                     bundle_text,
                     ['title', 'headline', 'heading', 'text'],
                 )
-                ProductContentGenerationService._set_list_props(props, variant_items, ['items', 'variants', 'options'])
-                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_bundle')) or bool(variant_items)
+                ProductContentGenerationService._set_list_props(props, variant_items or payload_dict.get('bundle_items') or [], ['items', 'variants', 'options'])
+                props['visible'] = bool(rule_analysis.get('blocks', {}).get('show_bundle')) or bool(variant_items or payload_dict.get('bundle_items'))
                 applied_flags['bundle'] = True
                 continue
 
             if 'price' in descriptor:
-                price_text = copy_payload.price_caption or rule_analysis.get('price_label') or ''
+                price_text = payload_dict.get('price_caption') or rule_analysis.get('price_label') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
                     price_text,
@@ -488,7 +683,7 @@ class ProductContentGenerationService:
                 continue
 
             if block_type == 'cta' or any(keyword in descriptor for keyword in ('cta', 'button', 'buy', 'shop')):
-                cta_text = copy_payload.cta_label or 'Shop now'
+                cta_text = payload_dict.get('cta_label') or 'Shop now'
                 ProductContentGenerationService._set_text_props(
                     props,
                     cta_text,
@@ -504,7 +699,7 @@ class ProductContentGenerationService:
                 continue
 
             if any(keyword in descriptor for keyword in ('subtitle', 'subheadline', 'tagline')):
-                subtitle_text = copy_payload.hero_subtitle or copy_payload.tag_line or product_data.get('seo_description') or ''
+                subtitle_text = payload_dict.get('hero_subtitle') or payload_dict.get('tag_line') or product_data.get('seo_description') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
                     subtitle_text,
@@ -515,18 +710,18 @@ class ProductContentGenerationService:
                 continue
 
             if any(keyword in descriptor for keyword in ('benefit', 'feature')):
-                benefits = copy_payload.benefit_bullets
+                benefits_local = payload_dict.get('benefit_bullets') or []
                 ProductContentGenerationService._set_list_props(
                     props,
-                    benefits,
+                    benefits_local,
                     ['items', 'benefits', 'bullets'],
                 )
-                if benefits:
+                if benefits_local:
                     props['visible'] = True
                 continue
 
             if any(keyword in descriptor for keyword in ('description', 'body', 'copy', 'details')):
-                desc_text = copy_payload.pain_point or product_data.get('description_text') or ''
+                desc_text = payload_dict.get('pain_point') or product_data.get('description_text') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
                     desc_text,
@@ -537,7 +732,7 @@ class ProductContentGenerationService:
                 continue
 
             if any(keyword in descriptor for keyword in ('title', 'headline', 'hero')):
-                title_text = copy_payload.hero_title or product_data.get('title') or ''
+                title_text = payload_dict.get('hero_title') or product_data.get('title') or ''
                 ProductContentGenerationService._set_text_props(
                     props,
                     title_text,

@@ -166,5 +166,28 @@ class ProductContentGenerationView(viewsets.ViewSet):
             'structure': process['structure'],
             'template_id': process['template'].id,
         }
-        print('Generated content for product', response_payload)
+        
         return Response(response_payload, status=status.HTTP_200_OK)
+
+
+class MyContentViewSet(viewsets.ModelViewSet):
+    """
+    Simple endpoint that returns and allows deletion of content records
+    belonging to the authenticated user. Follows existing service-layer
+    permission checks.
+    """
+    serializer_class = ContentSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'delete']
+
+    def get_queryset(self):
+        return ContentService.get_user_contents(self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        try:
+            ContentService.delete_content(instance, request.user)
+        except ValidationError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_403_FORBIDDEN)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)

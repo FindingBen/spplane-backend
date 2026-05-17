@@ -107,7 +107,9 @@ class OpenAILLMClient(LLMClient):
         template_structure: dict,
     ) -> ProductCopyPayload:
         template_summary = []
+       
         components = template_structure.get("components") or template_structure.get("blocks") or []
+        
         for component in components:
             if not isinstance(component, dict):
                 continue
@@ -142,7 +144,7 @@ class OpenAILLMClient(LLMClient):
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
-
+     
         try:
             return ProductCopyPayload.model_validate(payload)
         except PydanticValidationError as exc:
