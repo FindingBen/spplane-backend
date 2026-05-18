@@ -6,6 +6,7 @@ from rest_framework.test import APIClient
 from django.urls import reverse
 
 from apps.accounts.models import User
+from apps.campaign.models import Campaign
 from apps.contacts.models import Contact, ContactList, SegmentMembership
 from apps.sms.models import Sms, SmsPage, SmsRecipient, SmsEvent
 from apps.sms.sending_service import VonageProvider, SmsSendingService
@@ -139,6 +140,39 @@ class SmsEstimateCostTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn('US and CA numbers is not supported yet', response.json()['error'])
+
+
+class SmsCreateTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='sms-create@example.com',
+            password='pass12345',
+            user_type='regular',
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_allows_campaign_without_content(self):
+        campaign = Campaign.objects.create(
+            user=self.user,
+            name='No Content Campaign',
+        )
+
+        response = self.client.post(
+            '/api/sms/v1/',
+            {
+                'campaign': str(campaign.id),
+                'sender': 'SPPLANE',
+                'body': 'Hello world',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        sms = Sms.objects.get(id=response.json()['id'])
+        self.assertEqual(sms.campaign_id, campaign.id)
+        self.assertFalse(SmsPage.objects.filter(sms=sms).exists())
 
 
 class SmsSendValidationTests(TestCase):

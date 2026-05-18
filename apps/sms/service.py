@@ -4,7 +4,6 @@ from apps.sms.models import SmsEvent
 from apps.sms.models import SmsRecipient
 from apps.sms.models import SmsPageAction
 from apps.sms.models import SmsPage
-from django.core.exceptions import ValidationError
 from apps.sms.models import Sms
 
 
@@ -68,10 +67,6 @@ class SmsService:
                 )
                 if campaign_with_content is not None and campaign_with_content.content is not None:
                     SmsPageService._create_page_with_actions(sms, campaign_with_content.content)
-                else:
-                    raise ValidationError(
-                        "Selected campaign has no linked content. Attach content to the campaign first."
-                    )
 
         return sms
 
