@@ -2,6 +2,7 @@ import os
 import dotenv
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -24,6 +25,47 @@ def _default_s3_domain(bucket_name, region_name):
         return f'{bucket_name}.s3.{region_name}.amazonaws.com'
 
     return f'{bucket_name}.s3.amazonaws.com'
+
+
+def _normalize_origin(value):
+    value = (value or '').strip()
+    if not value:
+        return None
+
+    parsed = urlsplit(value)
+    if parsed.scheme not in {'http', 'https'} or not parsed.netloc:
+        return None
+
+    return f'{parsed.scheme}://{parsed.netloc}'
+
+
+def _parse_origin_list(value):
+    origins = []
+    for raw_origin in (value or '').split(','):
+        origin = _normalize_origin(raw_origin)
+        if origin:
+            origins.append(origin)
+
+    return origins
+
+
+def _unique_list(values):
+    seen = set()
+    items = []
+    for value in values:
+        if value in seen:
+            continue
+
+        seen.add(value)
+        items.append(value)
+
+    return items
+
+
+def _build_trusted_origins(frontend_url, origins_env):
+    return _unique_list(
+        _parse_origin_list(origins_env) + _parse_origin_list(frontend_url)
+    )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv_file = os.path.join(BASE_DIR, ".env")
@@ -209,10 +251,8 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 
 _origins_env = os.environ.get('ORIGINS', '')
-if _origins_env:
-    CORS_ALLOWED_ORIGINS = [o.strip() for o in _origins_env.split(',') if o.strip()]
-else:
-    CORS_ALLOWED_ORIGINS = []
+CORS_ALLOWED_ORIGINS = _build_trusted_origins(FRONTEND_URL, _origins_env)
+CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
 
 CORS_ALLOW_CREDENTIALS = True
 
