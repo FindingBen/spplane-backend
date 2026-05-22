@@ -219,3 +219,47 @@ class SmsEvent(models.Model):
     occurred_at = models.DateTimeField()
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+class SmsOptIn(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="sms_opt_ins",
+    )
+    contact = models.ForeignKey(
+        "contacts.Contact",
+        on_delete=models.CASCADE,
+        related_name="sms_opt_ins",
+    )
+
+    phone = models.CharField(max_length=20)
+    source = models.CharField(max_length=50)  # e.g., "web_form", "sms_reply", "import"
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("contact", "phone")]
+
+class QrCode(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="qr_codes",
+    )
+    contact_list = models.ForeignKey(
+        "contacts.ContactList",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="qr_codes",
+    )
+    qr_source_signup = models.CharField(max_length=50)
+
+    code_data = models.CharField(max_length=255)
+    qr_image_url = models.URLField(max_length=500)
+
+    created_at = models.DateTimeField(auto_now_add=True)

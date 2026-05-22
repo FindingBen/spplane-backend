@@ -1,6 +1,7 @@
 from django.contrib import admin
-from .models import Sms, SmsPage, SmsPageAction, SmsRecipient, SmsEvent
+from .models import Sms, SmsPage, SmsPageAction, SmsRecipient, SmsEvent, QrCode
 
+admin.site.register(QrCode)
 
 class SmsPageInline(admin.StackedInline):
 	model = SmsPage

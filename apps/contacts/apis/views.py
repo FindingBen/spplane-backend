@@ -4,7 +4,7 @@ from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from apps.contacts.service import ContactListService
 from .serializers import ContactListSerializer
@@ -111,3 +111,25 @@ class ContactViewSet(viewsets.ModelViewSet):
             return Response({'error': str(error)}, status=status.HTTP_403_FORBIDDEN)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class QRContactViewset(viewsets.ViewSet):
+
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        pop_data = request.data
+        qr_id = request.data.get('qr_id',None)
+        if qr_id is None:
+            return Response({'error': 'qr_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        pop_data.pop('qr_id', None)  # Remove qr_id from data before validation
+        serializer = ContactSerializer(data=pop_data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            contact = ContactService.qr_contact_opin(serializer.validated_data,qr_id)
+        except ValidationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+
+        output_serializer = ContactSerializer(contact)
+        return Response(output_serializer.data, status=status.HTTP_201_CREATED)

@@ -1,4 +1,5 @@
 from django.core.exceptions import ValidationError
+from .exceptions import ErrorExceptionCreation
 from django.db import transaction
 
 from apps.contacts.models import ContactList, Contact, SegmentMembership
@@ -145,6 +146,21 @@ class ContactService:
 
         ContactService._refresh_segment_lengths(contact_lists)
         return contact
+    
+    @staticmethod
+    def qr_contact_opin(contact_data, qr_id:str) -> Contact:
+        from apps.accounts.models import User
+        from apps.sms.models import QrCode
+        qr = QrCode.objects.filter(id=qr_id).first()
+        
+        
+        contact_data['source'] = 'qr_code'
+        contact = Contact.objects.create(**contact_data, users=qr.user)
+        if contact:
+            return contact
+        
+        raise ErrorExceptionCreation
+
 
     @staticmethod
     def get_all_contacts(user=None):

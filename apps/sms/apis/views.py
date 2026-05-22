@@ -1,25 +1,16 @@
 import logging
 
-from apps.sms.service import SmsEventService
-from .serializers import SmsEventSerializer
-from apps.sms.service import SmsRecipientService
-from .serializers import SmsRecipientSerializer
-from apps.sms.service import SmsPageActionService
-from .serializers import SmsPageActionSerializer
-from apps.sms.service import SmsPageService
-from .serializers import SmsPageSerializer
+from .serializers import SmsEventSerializer,SmsSerializer,SmsPageSerializer,SmsPublicPageSerializer,SmsRecipientSerializer,SmsPageActionSerializer,QRCodeSerializer
+from apps.sms.service import SmsPageActionService,SmsService,SmsEventService,SmsRecipientService,SmsPageService, QrCodeService
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from apps.sms.service import SmsService
-from .serializers import SmsSerializer
 from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from django.utils import timezone
-from .serializers import SmsPublicPageSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -278,6 +269,34 @@ class SmsEventViewSet(viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+class QrCodeViewset(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, format=None):
+        try:
+            if request.user is None:
+                return Response({'error': 'User not authenticated.'}, status=status.HTTP_401_UNAUTHORIZED)
+            
+            qr_code = QrCodeService.retrieve_or_generate_qr_code_for_user(request.user)
+            return Response({'qr_code_url': qr_code.qr_image_url}, status=status.HTTP_200_OK)
+        except ValidationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def post(self, request, format=None):
+        try:
+            serializer = QRCodeSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            qr = QrCodeService.create_qr_code(serializer.validated_data, request.user)
+            if qr:
+                return Response({'qr_code_url': qr.qr_image_url}, status=status.HTTP_201_CREATED)
+            return Response({'error': 'Unable to create QR code.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except ValidationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class PublicSmsPageView(APIView):
@@ -420,3 +439,4 @@ class VonageDeliveryWebhookView(APIView):
             logger.exception("VonageDeliveryWebhook: failed to process DLR for %s", message_uuid)
 
         return Response(status=status.HTTP_200_OK)
+

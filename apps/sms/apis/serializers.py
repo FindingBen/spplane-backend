@@ -1,7 +1,5 @@
-from apps.sms.models import SmsEvent
-from apps.sms.models import SmsRecipient
-from apps.sms.models import SmsPageAction
-from apps.sms.models import SmsPage
+from apps.contacts.models import ContactList
+from apps.sms.models import SmsPage,QrCode,Sms,SmsPageAction,SmsRecipient,SmsEvent
 from rest_framework import serializers
 from apps.sms.models import Sms
 
@@ -70,3 +68,17 @@ class SmsPublicPageSerializer(serializers.ModelSerializer):
             }
             for a in actions_qs
         ]
+
+class QRCodeSerializer(serializers.ModelSerializer):
+    segment_id = serializers.PrimaryKeyRelatedField(
+        source='contact_list',
+        queryset=ContactList.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
+
+    class Meta:
+        model = QrCode
+        fields = ['id', 'qr_source_signup', 'segment_id', 'code_data', 'qr_image_url', 'created_at']
+        read_only_fields = ['id', 'code_data', 'qr_image_url', 'created_at']

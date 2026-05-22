@@ -4,11 +4,13 @@ from unittest.mock import Mock, patch
 
 from rest_framework.test import APIClient
 from django.urls import reverse
+from django.core.exceptions import ValidationError
 
 from apps.accounts.models import User
 from apps.campaign.models import Campaign
 from apps.contacts.models import Contact, ContactList, SegmentMembership
-from apps.sms.models import Sms, SmsPage, SmsRecipient, SmsEvent
+from apps.sms.models import Sms, SmsPage, SmsRecipient, SmsEvent, QrCode
+from apps.sms.service import QrCodeService
 from apps.sms.sending_service import VonageProvider, SmsSendingService
 
 
@@ -287,3 +289,80 @@ class VonageProviderTests(TestCase):
                 self.assertIn('US and CA numbers is not supported yet', result.error_message)
 
         provider._vonage.messages.send.assert_not_called()
+
+
+class QrCodeServiceTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email='qr-owner@example.com',
+            password='pass12345',
+            user_type='regular',
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.user)
+        self.segment_one = ContactList.objects.create(
+            users=self.user,
+            segment_name='Segment One',
+        )
+        self.segment_two = ContactList.objects.create(
+            users=self.user,
+            segment_name='Segment Two',
+        )
+
+    @override_settings(FRONTEND_URL='https://frontend.example.com')
+    @patch('apps.sms.service.QrCodeService.save_qr_image', return_value='https://cdn.example.com/qr/customers.png')
+    @patch('apps.sms.service.qrcode.make')
+    def test_customers_qr_can_only_be_created_once(self, make_mock, save_mock):
+        make_mock.return_value = Mock()
+
+        first_response = self.client.post(
+            '/api/sms/sms-page-signup/',
+            {'qr_source_signup': 'customers'},
+            format='json',
+        )
+        second_response = self.client.post(
+            '/api/sms/sms-page-signup/',
+            {'qr_source_signup': 'customers'},
+            format='json',
+        )
+
+        self.assertEqual(first_response.status_code, 201)
+        self.assertEqual(second_response.status_code, 400)
+        self.assertIn('already exists for the customers list', second_response.json()['error'])
+        self.assertEqual(QrCode.objects.filter(user=self.user, qr_source_signup='customers').count(), 1)
+        self.assertEqual(make_mock.call_count, 1)
+        self.assertEqual(save_mock.call_count, 1)
+
+    @override_settings(FRONTEND_URL='https://frontend.example.com')
+    @patch('apps.sms.service.QrCodeService.save_qr_image', side_effect=[
+        'https://cdn.example.com/qr/segment-one.png',
+        'https://cdn.example.com/qr/segment-two.png',
+    ])
+    @patch('apps.sms.service.qrcode.make')
+    def test_segments_can_each_have_one_qr_code(self, make_mock, save_mock):
+        make_mock.return_value = Mock()
+
+        first_segment_response = self.client.post(
+            '/api/sms/sms-page-signup/',
+            {'qr_source_signup': 'segment', 'segment_id': self.segment_one.id},
+            format='json',
+        )
+        duplicate_segment_response = self.client.post(
+            '/api/sms/sms-page-signup/',
+            {'qr_source_signup': 'segment', 'segment_id': self.segment_one.id},
+            format='json',
+        )
+        second_segment_response = self.client.post(
+            '/api/sms/sms-page-signup/',
+            {'qr_source_signup': 'segment', 'segment_id': self.segment_two.id},
+            format='json',
+        )
+
+        self.assertEqual(first_segment_response.status_code, 201)
+        self.assertEqual(duplicate_segment_response.status_code, 400)
+        self.assertIn('already exists for this segment', duplicate_segment_response.json()['error'])
+        self.assertEqual(second_segment_response.status_code, 201)
+        self.assertEqual(QrCode.objects.filter(user=self.user, qr_source_signup='segment').count(), 2)
+        self.assertEqual(make_mock.call_count, 2)
+        self.assertEqual(save_mock.call_count, 2)

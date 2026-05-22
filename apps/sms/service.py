@@ -1,10 +1,15 @@
 import uuid
+from io import BytesIO
+
+import qrcode
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.db import transaction
-from apps.sms.models import SmsEvent
-from apps.sms.models import SmsRecipient
-from apps.sms.models import SmsPageAction
-from apps.sms.models import SmsPage
-from apps.sms.models import Sms
+
+from apps.contacts.models import ContactList
+from apps.sms.models import SmsEvent, SmsRecipient, SmsPageAction, SmsPage, Sms, QrCode
 
 
 class SmsService:
@@ -357,3 +362,79 @@ class SmsEventService:
     @staticmethod
     def delete_sms_event(sms_event, user=None):
         sms_event.delete()
+
+class QrCodeService:
+    @staticmethod
+    def retrieve_or_generate_qr_code_for_user(user):
+        qr_code = (
+            QrCode.objects.filter(
+                user=user,
+                qr_source_signup='customers',
+                contact_list__isnull=True,
+            )
+            .order_by('-created_at')
+            .first()
+        )
+        if qr_code is None:
+            raise ValidationError('No QR code exists for the customers list.')
+        return qr_code
+
+    @staticmethod
+    def create_qr_code(qr_code_data, user=None) -> dict:
+        if user is None:
+            raise ValidationError('Authenticated user is required to create a QR code.')
+
+        source = qr_code_data.get('qr_source_signup')
+        if source not in {'customers', 'segment'}:
+            raise ValidationError("qr_source_signup must be either 'customers' or 'segment'.")
+
+        contact_list = None
+        if source == 'segment':
+            contact_list = qr_code_data.get('contact_list')
+            if contact_list is None:
+                raise ValidationError('contact_list is required for segment QR codes.')
+            if contact_list.users != user:
+                raise ValidationError("You don't have permission to use this segment.")
+            if QrCode.objects.filter(
+                user=user,
+                qr_source_signup='segment',
+                contact_list=contact_list,
+            ).exists():
+                raise ValidationError('A QR code already exists for this segment.')
+        else:
+            if qr_code_data.get('contact_list') is not None:
+                raise ValidationError('contact_list can only be used for segment QR codes.')
+            if QrCode.objects.filter(
+                user=user,
+                qr_source_signup='customers',
+                contact_list__isnull=True,
+            ).exists():
+                raise ValidationError('A QR code already exists for the customers list.')
+
+        qr_code = QrCode.objects.create(
+            user=user,
+            qr_source_signup=source,
+            contact_list=contact_list,
+            code_data='',
+            qr_image_url='',
+        )
+
+        signup_url = f"{settings.FRONTEND_URL.rstrip('/')}/sms-optin?q={qr_code.id}"
+
+        img = qrcode.make(signup_url)
+        image_url = QrCodeService.save_qr_image(img, filename=f"qr/{qr_code.id}.png")
+
+        qr_code.code_data = signup_url
+        qr_code.qr_image_url = image_url
+        qr_code.save(update_fields=['code_data', 'qr_image_url'])
+
+        return qr_code
+
+    @staticmethod
+    def save_qr_image(img, filename):
+        buffer = BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        file_url = default_storage.save(filename, ContentFile(buffer.getvalue()))
+        return default_storage.url(file_url)
+        
