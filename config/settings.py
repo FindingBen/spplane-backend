@@ -106,7 +106,6 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'storages',
-    'qr_code',
     
     "apps.accounts.apps.AccountsConfig",
     "apps.contacts.apps.ContactsConfig",
