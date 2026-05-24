@@ -114,6 +114,7 @@ INSTALLED_APPS = [
     "apps.sms.apps.SmsConfig",
     "apps.shopify.apps.ShopifyConfig",
     "apps.payment.apps.PaymentConfig",
+    "apps.automation.apps.AutomationConfig",
 ]
 
 MIDDLEWARE = [
