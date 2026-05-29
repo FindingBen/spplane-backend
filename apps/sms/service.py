@@ -8,7 +8,6 @@ from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
 
-from apps.contacts.models import ContactList
 from apps.sms.models import SmsEvent, SmsRecipient, SmsPageAction, SmsPage, Sms, QrCode
 
 
@@ -437,4 +436,55 @@ class QrCodeService:
         buffer.seek(0)
         file_url = default_storage.save(filename, ContentFile(buffer.getvalue()))
         return default_storage.url(file_url)
+
+class WelcomeSmsService:
+    @staticmethod
+    def _generate_tracking_id():
+        while True:
+            candidate = uuid.uuid4().hex[:12]
+            if not Sms.objects.filter(tracking_id=candidate).exists():
+                return candidate
+
+    @staticmethod
+    def check_automation(user):
+        automation = user.automation_set.filter(
+                automation_type="welcome_user",
+                is_active=True,
+            ).first()
+        if automation is None:
+            raise ValidationError('No active welcome automation found for user.')
+        
+        return automation
+
+    @staticmethod
+    def send_welcome_sms(customer_id:str, user) -> dict:
+        from apps.sms.tasks import dispatch_welcome_sms
+        has_active_automation = WelcomeSmsService.check_automation(user)
+
+        if has_active_automation is not None:
+            sms = WelcomeSmsService.create_welcome_sms(user, has_active_automation.sms_body, has_active_automation.sms_sender)
+            dispatch_welcome_sms.delay(sms.id, customer_id)
+
+            return {
+                "status": 200,
+                "message": "Sms dispatched"
+            }
+        
+    @staticmethod
+    def create_welcome_sms(user, sms_body:str, sms_sender:str):
+        from apps.sms.models import Sms
+        create_data = {}
+        create_data['tracking_id'] = WelcomeSmsService._generate_tracking_id()
+        create_data['user'] = user
+        create_data['sender'] = sms_sender
+        create_data['body'] = sms_body
+        create_data['status'] = 'automated'
+        create_data['provider'] = 'vonage'
+        sms = Sms.objects.create(**create_data)
+
+        return sms
+        
+        
+    
+        
         

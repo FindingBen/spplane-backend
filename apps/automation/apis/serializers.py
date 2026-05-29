@@ -6,7 +6,7 @@ from rest_framework import serializers
 class AutomationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Automation
-        fields = ['id', 'name', 'description','automation_type', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description','automation_type','sms_body', 'sms_sender','is_active', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 class AutomationExecutionSerializer(serializers.ModelSerializer):

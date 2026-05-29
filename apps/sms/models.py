@@ -34,6 +34,7 @@ class Sms(models.Model):
         max_length=20,
         choices=[
             ("draft", "Draft"),
+            ("automated", "Automated"),
             ("scheduled", "Scheduled"),
             ("processing", "Processing"),
             ("sent", "Sent"),

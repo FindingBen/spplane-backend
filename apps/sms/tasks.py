@@ -1,4 +1,5 @@
 import logging
+from django.conf import settings
 from apps.accounts.service import WalletTransactionService
 from celery import shared_task
 from django.utils import timezone
@@ -39,7 +40,17 @@ def dispatch_sms_send(self, sms_id: str) -> dict:
             _mark_sms_failed(sms_id)
             raise
 
+@shared_task(bind=True,max_retries=3, default_retry_delay=30)
+def dispatch_welcome_sms(self, sms_id: str, customer_id:str) -> dict:
+    from apps.sms.sending_service import AutomatedSendService
 
+    try:
+        service = AutomatedSendService()
+        return service.validate_and_send(customer_id, sms_id)
+    except ValueError as exc:
+        logger.error("dispatch_welcome_sms: validation error for sms %s: %s", sms_id, exc)
+        _mark_sms_failed(sms_id)
+        raise
 # ---------------------------------------------------------------------------
 # send_recipient_batch
 #
@@ -377,3 +388,117 @@ def _mark_sms_failed(sms_id: str) -> None:
         )
     except Exception:
         logger.exception("_mark_sms_failed: could not update sms %s", sms_id)
+
+
+@shared_task(bind=True)
+def send_welcome_sms(self, sms_id: str, customer_id:str) -> None:
+    from apps.sms.sending_service import AutomatedSendService,VonageProvider
+    from apps.sms.excpections import SmsNotFound, ContactNotFound
+    from apps.sms.models import Sms, SmsEvent, SmsRecipient
+    from apps.contacts.models import Contact
+
+
+    try:
+        sms = Sms.objects.get(id=sms_id)
+    except Exception as e:
+        raise SmsNotFound(str(e))
+    
+    try:
+        contact = Contact.objects.filter(id=customer_id).first()
+    except Exception as e:
+        raise ContactNotFound(str(e))
+
+    page_slug = None
+    try:
+        page_slug = sms.page.public_slug
+    except Exception:
+        pass  # SMS without a hosted page is fine
+
+    provider = VonageProvider(
+        api_key=settings.VONAGE_ID,
+        api_secret=settings.VONAGE_TOKEN,
+    )
+    
+    service = AutomatedSendService()
+    recipient = service.build_recipient(sms,contact)
+    body = service.render_body(
+        template=sms.body,
+        first_name=contact.first_name,
+        page_slug=page_slug,
+        access_token=recipient.access_token)
+
+    result = provider.send(
+            from_=sms.sender,
+            to=recipient.phone,
+            text=body,
+            client_ref=f"{sms.tracking_id}-{str(recipient.id)[:8]}",
+        )
+
+    transient_failures = [] 
+    events_to_create = []
+    sent_count = 0
+    failed_count = 0
+
+    if result.success:
+            recipient.status = "sent"
+            recipient.provider_message_id = result.provider_message_id
+            recipient.provider_status = "sent"
+            recipient.error_code = ""
+            recipient.error_message = ""
+            sent_count += 1
+    elif result.is_permanent_failure:
+        recipient.status = "failed"
+        recipient.provider_status = "failed"
+        recipient.error_code = result.error_code
+        recipient.error_message = result.error_message
+        failed_count += 1
+    else:
+            # Transient — keep status="queued" so a retry can pick it up.
+        recipient.error_code = result.error_code
+        recipient.error_message = result.error_message
+        transient_failures.append(str(recipient.id))
+
+    recipient.save(update_fields=[
+            "status",
+            "provider_message_id",
+            "provider_status",
+            "error_code",
+            "error_message",
+            "updated_at",
+    ])
+
+    event_type = "sent" if result.success else "failed"
+    events_to_create.append(SmsEvent(
+            sms=sms,
+            recipient=recipient,
+            event_type=event_type,
+            metadata={
+                "provider_message_id": result.provider_message_id,
+                "error_code": result.error_code,
+                "error_message": result.error_message,
+            },
+            occurred_at=timezone.now(),
+        ))
+
+    if events_to_create:
+        SmsEvent.objects.bulk_create(events_to_create)
+
+    if transient_failures:
+        try:
+            raise self.retry(
+                args=[sms_id, transient_failures],
+                countdown=2 ** self.request.retries * 60,
+            )
+        except self.MaxRetriesExceededError:
+            logger.warning(
+                "send_recipient_batch: retries exhausted for %d recipients in sms %s. "
+                "Marking as failed.",
+                len(transient_failures), sms_id,
+            )
+            SmsRecipient.objects.filter(id__in=transient_failures).update(
+                status="failed",
+                error_code="max_retries_exceeded",
+                updated_at=timezone.now(),
+            )
+
+    return {"sent": sent_count, "failed": failed_count}

@@ -1,5 +1,5 @@
 from django.core.exceptions import ValidationError
-from .exceptions import ErrorExceptionCreation
+from .exceptions import ErrorExceptionCreation,PhoneAlreadyRegistered
 from django.db import transaction
 
 from apps.contacts.models import ContactList, Contact, SegmentMembership
@@ -148,17 +148,24 @@ class ContactService:
         return contact
     
     @staticmethod
-    def qr_contact_opin(contact_data, qr_id:str) -> Contact:
-        from apps.accounts.models import User
+    def qr_contact_optin(contact_data, qr_id:str) -> Contact:
+
         from apps.sms.models import QrCode
+        from apps.sms.service import WelcomeSmsService
         qr = QrCode.objects.filter(id=qr_id).first()
         
         
         contact_data['source'] = 'qr_code'
+        # contact_data['status'] = 'subscribed'
+        existing_number = Contact.objects.filter(users=qr.user, phone=contact_data['phone'])
+        if len(existing_number) > 0:
+            raise PhoneAlreadyRegistered("Phone already exists!")
         contact = Contact.objects.create(**contact_data, users=qr.user)
-        if contact:
-            return contact
         
+        if contact:
+            WelcomeSmsService.send_welcome_sms(customer_id=contact.id,user=qr.user)
+            return contact
+
         raise ErrorExceptionCreation
 
 

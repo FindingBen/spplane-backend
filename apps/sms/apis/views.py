@@ -346,7 +346,6 @@ class PublicSmsPageView(APIView):
         serializer = SmsPublicPageSerializer(page)
         return Response(serializer.data)
 
-
 # ---------------------------------------------------------------------------
 # Vonage Messages API delivery webhook
 # POST /sms/delivery

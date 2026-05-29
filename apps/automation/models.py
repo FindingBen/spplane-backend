@@ -9,7 +9,9 @@ class Automation(models.Model):
     ]
 
     user = models.ForeignKey('accounts.User', on_delete=models.CASCADE)
-    name = models.CharField(max_length=255)
+    sms_body = models.CharField(max_length=255, null=True)
+    sms_sender = models.CharField(max_length=255, null=True)
+    name = models.CharField(max_length=500)
     automation_type = models.CharField(max_length=50, choices=AUTOMTAION_TYPES)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=False)

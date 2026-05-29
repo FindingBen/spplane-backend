@@ -118,16 +118,19 @@ class QRContactViewset(viewsets.ViewSet):
     permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
-        pop_data = request.data
-        qr_id = request.data.get('qr_id',None)
-        if qr_id is None:
-            return Response({'error': 'qr_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        pop_data.pop('qr_id', None)  # Remove qr_id from data before validation
-        serializer = ContactSerializer(data=pop_data)
-        serializer.is_valid(raise_exception=True)
 
         try:
-            contact = ContactService.qr_contact_opin(serializer.validated_data,qr_id)
+            pop_data = request.data
+            qr_id = request.data.get('qr_id',None)
+            if qr_id is None:
+                return Response({'error': 'qr_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            pop_data.pop('qr_id', None)  # Remove qr_id from data before validation
+            serializer = ContactSerializer(data=pop_data)
+            serializer.is_valid(raise_exception=True)
+            contact = ContactService.qr_contact_optin(serializer.validated_data,qr_id)
+
+            return Response("Contact created!", status=status.HTTP_201_CREATED)
+
         except ValidationError as error:
             return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
 

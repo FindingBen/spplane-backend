@@ -14,6 +14,8 @@ class AutomationService:
                 name=automation_data['name'],
                 automation_type=automation_data['automation_type'],
                 description=automation_data['description'],
+                sms_body=automation_data['sms_body'],
+                sms_sender=automation_data['sms_sender'],
                 user=user
             )
             return automation

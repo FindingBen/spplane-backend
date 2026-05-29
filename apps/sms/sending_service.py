@@ -222,6 +222,21 @@ class VonageProvider:
 # No Vonage SDK dependency — only uses the pricing data fetched above.
 # ---------------------------------------------------------------------------
 
+class MutualHelpers:
+    @staticmethod
+    def update_credits(sms_id:str, cost: int, user_id:str, wallet: WalletTransactionService):
+        """
+        Updates the user's wallet by debiting the cost of the send.
+        Called from the finalize_sms_send task after all batches complete successfully.
+        """
+        
+        reserve = wallet.reserve_funds(user_id, cost, reference_id=sms_id)
+        if isinstance(reserve, Exception):
+            logger.error(f"Failed to reserve funds for user {user_id}: {reserve}")
+            raise reserve
+
+        return True
+
 class PricingService:
 
     @staticmethod
@@ -507,3 +522,118 @@ class SmsSendingService:
 
         # chord: run all batches in parallel, then run finalize when all finish
         (group(batches) | finalize_sms_send.si(sms_id)).delay()
+
+
+class AutomatedSendService:
+    PROVIDER_NAME = "vonage"
+
+    def __init__(self):
+        self.provider = VonageProvider(
+            api_key=settings.VONAGE_ID,
+            api_secret=settings.VONAGE_TOKEN,
+        )
+    """
+    Service for triggering automated sends like welcome messages.
+    Called from automation tasks when an automation execution starts.
+    """
+    def validate_and_send(self, customer_id: str, sms_id:str) -> None:
+        from apps.sms.models import Sms
+        from apps.contacts.models import Contact
+        from apps.accounts.models import Wallet
+    
+        # check for user_id if exists in customer
+        sms = Sms.objects.filter(id=sms_id).first()
+        contact = Contact.objects.filter(id=customer_id).first()
+        
+        print('here')
+        self.assert_sendable(sms)
+        # self.build_recipient(sms, contact)
+        helper_service = MutualHelpers()
+        wallet = Wallet.objects.filter(user_id=sms.user_id).first()
+        wallet_service = WalletTransactionService()
+
+        est_cost = self.estimate_price(sms_id, contact)
+        print('cost')
+        if wallet.balance - wallet.reserved < est_cost["estimated_credits"]:
+            raise ValueError("Insufficient credits to send this message.")
+
+        with transaction.atomic():
+            reserve_credits = helper_service.update_credits(sms_id,est_cost["estimated_credits"], str(sms.user_id), wallet_service)
+            if reserve_credits is not True:
+                raise ValueError(f"Failed to reserve credits for this send: {reserve_credits}")
+            sms.status = "processing"
+            sms.provider = self.PROVIDER_NAME
+            sms.save(update_fields=["status", "provider", "updated_at"])
+
+        self.enqueue_welcome_send(sms_id=sms_id, customer_id=customer_id)
+
+    def enqueue_welcome_send(self,sms_id:str, customer_id:str) -> None:
+        from apps.sms.tasks import send_welcome_sms, finalize_sms_send
+
+        _enque = send_welcome_sms.si(sms_id, customer_id)
+
+        (_enque | finalize_sms_send.si(sms_id)).delay()
+
+
+        
+    def assert_sendable(self,sms) -> None:
+        if sms.status != "automated":
+            raise ValueError(
+                f"Sms cannot be dispatched from status '{sms.status}'. "
+                "Only active sends can be triggered."
+            )
+        if not sms.sender:
+            raise ValueError("Sms has no sender number set.")
+        
+    def build_recipient(self, sms, contact):
+        from apps.sms.models import Sms, SmsRecipient
+
+        if contact.status != "subscribed":
+            raise ValueError("Contact is not subscribed to receive messages.")
+        recipient = SmsRecipient.objects.create(
+                sms=sms,
+                contact=contact,
+                phone=contact.phone,
+                access_token=uuid.uuid4().hex,
+                status="queued",
+            )
+        return recipient
+    
+    def estimate_price(self, sms_id: str, contact) -> dict:
+        """
+        pricing service return {
+            "total_cost": round(total_cost, 6),
+            "recipients": len(details),
+            "estimated_credits": est_credits,
+            "details": details,
+        }
+        """
+        from apps.sms.models import Sms
+
+        sms = Sms.objects.get(id=sms_id)
+        return PricingService.estimate_send_cost([contact], sms.body, VonageProvider(
+            api_key=settings.VONAGE_ID,
+            api_secret=settings.VONAGE_TOKEN,
+        ))
+    
+
+    def render_body(
+        self,
+        template: str,
+        first_name: str,
+        page_slug: str | None,
+        access_token: str,
+    ) -> str:
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+
+        body = template.replace("{{first_name}}", first_name or "")
+
+        if page_slug:
+            page_url = f"{frontend_url}/sms/page/{page_slug}?t={access_token}"
+            if "{{page_link}}" in body:
+                body = body.replace("{{page_link}}", page_url)
+            else:
+                body = f"{body}\n{page_url}"
+
+        opt_out_url = f"{frontend_url}/opt-out?t={access_token}"
+        return f"{body}\n\nOpt-out: {opt_out_url}"
