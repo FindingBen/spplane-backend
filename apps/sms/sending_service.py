@@ -236,6 +236,18 @@ class MutualHelpers:
             raise reserve
 
         return True
+    
+    @staticmethod
+    def assert_sendable(sms) -> None:
+        if sms.status not in ("draft", "scheduled"):
+            raise ValueError(
+                f"Sms cannot be dispatched from status '{sms.status}'. "
+                "Only draft or scheduled sends can be triggered."
+            )
+        if not sms.contact_list_id:
+            raise ValueError("Sms has no contact list attached.")
+        if not sms.sender:
+            raise ValueError("Sms has no sender number set.")
 
 class PricingService:
 
@@ -319,6 +331,7 @@ class SmsSendingService:
             api_key=settings.VONAGE_ID,
             api_secret=settings.VONAGE_TOKEN,
         )
+        self.helper = MutualHelpers()
 
     # --- Public entry points ------------------------------------------------
 
@@ -335,17 +348,19 @@ class SmsSendingService:
             .select_related("contact_list", "user")
             .get(id=sms_id)
         )
-
-        self._assert_sendable(sms)
+        
+        self.helper.assert_sendable(sms)
         contacts = self._get_sendable_contacts(sms)
 
         #initiate wallet service once here to avoid circular imports with tasks.py which also needs it for refunds and adjustments after send completion
         wallet_service = WalletTransactionService()
-
         est_cost = self.estimate_cost(sms_id)
-        self._sms_id = sms_id  # made available to _update_credits for ledger reference_id
+        
         with transaction.atomic():
-            reserve_credits = self._update_credits(est_cost["estimated_credits"], str(sms.user_id), wallet_service)
+            reserve_credits = self.helper.update_credits(sms_id=sms_id,
+                                                    cost=est_cost["estimated_credits"],
+                                                     user_id= str(sms.user_id),
+                                                      wallet= wallet_service)
             if reserve_credits is not True:
                 raise ValueError(f"Failed to reserve credits for this send: {reserve_credits}")
             recipient_ids = self._build_recipients(sms, contacts)
@@ -362,18 +377,6 @@ class SmsSendingService:
             "batch_count": batch_count,
         }
 
-    def _update_credits(self, cost: int, user_id:str, wallet: WalletTransactionService):
-        """
-        Updates the user's wallet by debiting the cost of the send.
-        Called from the finalize_sms_send task after all batches complete successfully.
-        """
-        
-        reserve = wallet.reserve_funds(user_id, cost, reference_id=self._sms_id)
-        if isinstance(reserve, Exception):
-            logger.error(f"Failed to reserve funds for user {user_id}: {reserve}")
-            raise reserve
-
-        return True
 
     def estimate_cost(self, sms_id: str) -> dict:
         """
@@ -524,7 +527,7 @@ class SmsSendingService:
         (group(batches) | finalize_sms_send.si(sms_id)).delay()
 
 
-class AutomatedSendService:
+class SingleSendService:
     PROVIDER_NAME = "vonage"
 
     def __init__(self):
@@ -532,6 +535,7 @@ class AutomatedSendService:
             api_key=settings.VONAGE_ID,
             api_secret=settings.VONAGE_TOKEN,
         )
+        self.helper = MutualHelpers()
     """
     Service for triggering automated sends like welcome messages.
     Called from automation tasks when an automation execution starts.
@@ -545,10 +549,13 @@ class AutomatedSendService:
         sms = Sms.objects.filter(id=sms_id).first()
         contact = Contact.objects.filter(id=customer_id).first()
         
-        print('here')
-        self.assert_sendable(sms)
+        # Custom validation for single_send: check status and sender, but NOT contact_list
+        if sms.status not in ("draft", "scheduled","processing"):
+            raise ValueError(f"Sms cannot be dispatched from status '{sms.status}'. Only draft or scheduled sends can be triggered.")
+        if not sms.sender:
+            raise ValueError("Sms has no sender number set.")
+        
         # self.build_recipient(sms, contact)
-        helper_service = MutualHelpers()
         wallet = Wallet.objects.filter(user_id=sms.user_id).first()
         wallet_service = WalletTransactionService()
 
@@ -558,32 +565,21 @@ class AutomatedSendService:
             raise ValueError("Insufficient credits to send this message.")
 
         with transaction.atomic():
-            reserve_credits = helper_service.update_credits(sms_id,est_cost["estimated_credits"], str(sms.user_id), wallet_service)
+            reserve_credits = self.helper.update_credits(sms_id,est_cost["estimated_credits"], str(sms.user_id), wallet_service)
             if reserve_credits is not True:
                 raise ValueError(f"Failed to reserve credits for this send: {reserve_credits}")
             sms.status = "processing"
             sms.provider = self.PROVIDER_NAME
             sms.save(update_fields=["status", "provider", "updated_at"])
 
-        self.enqueue_welcome_send(sms_id=sms_id, customer_id=customer_id)
+        self.enqueue_send(sms_id=sms_id, customer_id=customer_id)
 
-    def enqueue_welcome_send(self,sms_id:str, customer_id:str) -> None:
-        from apps.sms.tasks import send_welcome_sms, finalize_sms_send
+    def enqueue_send(self,sms_id:str, customer_id:str) -> None:
+        from apps.sms.tasks import send_single_sms, finalize_sms_send
 
-        _enque = send_welcome_sms.si(sms_id, customer_id)
+        _enque = send_single_sms.si(sms_id, customer_id)
 
         (_enque | finalize_sms_send.si(sms_id)).delay()
-
-
-        
-    def assert_sendable(self,sms) -> None:
-        if sms.status != "automated":
-            raise ValueError(
-                f"Sms cannot be dispatched from status '{sms.status}'. "
-                "Only active sends can be triggered."
-            )
-        if not sms.sender:
-            raise ValueError("Sms has no sender number set.")
         
     def build_recipient(self, sms, contact):
         from apps.sms.models import Sms, SmsRecipient

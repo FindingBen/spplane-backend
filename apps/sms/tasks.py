@@ -41,14 +41,14 @@ def dispatch_sms_send(self, sms_id: str) -> dict:
             raise
 
 @shared_task(bind=True,max_retries=3, default_retry_delay=30)
-def dispatch_welcome_sms(self, sms_id: str, customer_id:str) -> dict:
-    from apps.sms.sending_service import AutomatedSendService
+def dispatch_single_sms(self, sms_id: str, customer_id:str) -> dict:
+    from apps.sms.sending_service import SingleSendService
 
     try:
-        service = AutomatedSendService()
+        service = SingleSendService()
         return service.validate_and_send(customer_id, sms_id)
     except ValueError as exc:
-        logger.error("dispatch_welcome_sms: validation error for sms %s: %s", sms_id, exc)
+        logger.error("dispatch_sms: validation error for sms %s: %s", sms_id, exc)
         _mark_sms_failed(sms_id)
         raise
 # ---------------------------------------------------------------------------
@@ -391,8 +391,8 @@ def _mark_sms_failed(sms_id: str) -> None:
 
 
 @shared_task(bind=True)
-def send_welcome_sms(self, sms_id: str, customer_id:str) -> None:
-    from apps.sms.sending_service import AutomatedSendService,VonageProvider
+def send_single_sms(self, sms_id: str, customer_id:str) -> None:
+    from apps.sms.sending_service import SingleSendService,VonageProvider
     from apps.sms.excpections import SmsNotFound, ContactNotFound
     from apps.sms.models import Sms, SmsEvent, SmsRecipient
     from apps.contacts.models import Contact
@@ -412,14 +412,14 @@ def send_welcome_sms(self, sms_id: str, customer_id:str) -> None:
     try:
         page_slug = sms.page.public_slug
     except Exception:
-        pass  # SMS without a hosted page is fine
+        pass
 
     provider = VonageProvider(
         api_key=settings.VONAGE_ID,
         api_secret=settings.VONAGE_TOKEN,
     )
     
-    service = AutomatedSendService()
+    service = SingleSendService()
     recipient = service.build_recipient(sms,contact)
     body = service.render_body(
         template=sms.body,
@@ -502,3 +502,4 @@ def send_welcome_sms(self, sms_id: str, customer_id:str) -> None:
             )
 
     return {"sent": sent_count, "failed": failed_count}
+

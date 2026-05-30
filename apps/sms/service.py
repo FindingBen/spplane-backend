@@ -158,7 +158,6 @@ class SmsPageService:
             SmsPageAction.objects.bulk_create(actions)
         return page
 
-
 class SmsPageActionService:
     @staticmethod
     def create_sms_page_action(sms_page_action_data, user=None):
@@ -220,7 +219,6 @@ class SmsPageActionService:
     @staticmethod
     def delete_sms_page_action(sms_page_action, user=None):
         sms_page_action.delete()
-
 
 class SmsRecipientService:
     @staticmethod
@@ -303,7 +301,6 @@ class SmsRecipientService:
     @staticmethod
     def delete_sms_recipient(sms_recipient, user=None):
         sms_recipient.delete()
-
 
 class SmsEventService:
     @staticmethod
@@ -458,31 +455,24 @@ class WelcomeSmsService:
 
     @staticmethod
     def send_welcome_sms(customer_id:str, user) -> dict:
-        from apps.sms.tasks import dispatch_welcome_sms
+        from apps.sms.tasks import dispatch_single_sms
         has_active_automation = WelcomeSmsService.check_automation(user)
 
         if has_active_automation is not None:
-            sms = WelcomeSmsService.create_welcome_sms(user, has_active_automation.sms_body, has_active_automation.sms_sender)
-            dispatch_welcome_sms.delay(sms.id, customer_id)
+            sms_data = {
+                'user':user,
+                'body':has_active_automation.sms_body,
+                'sender':has_active_automation.sms_sender,
+                'status':'scheduled',
+                'provider':'vonage'
+            }
+            sms = SmsService.create_sms(sms_data)
+            dispatch_single_sms.delay(sms.id, customer_id)
 
             return {
                 "status": 200,
                 "message": "Sms dispatched"
             }
-        
-    @staticmethod
-    def create_welcome_sms(user, sms_body:str, sms_sender:str):
-        from apps.sms.models import Sms
-        create_data = {}
-        create_data['tracking_id'] = WelcomeSmsService._generate_tracking_id()
-        create_data['user'] = user
-        create_data['sender'] = sms_sender
-        create_data['body'] = sms_body
-        create_data['status'] = 'automated'
-        create_data['provider'] = 'vonage'
-        sms = Sms.objects.create(**create_data)
-
-        return sms
         
         
     

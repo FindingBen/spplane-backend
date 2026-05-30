@@ -87,6 +87,32 @@ class SmsViewSet(viewsets.ModelViewSet):
 
         return Response({"detail": "Send queued.", "sms_id": str(instance.id)}, status=status.HTTP_202_ACCEPTED)
 
+    @action(detail=False, methods=['post'],url_path="single-send")
+    def single_send(self, request,pk=None):
+        from apps.sms.tasks import dispatch_single_sms
+        from apps.sms.sending_service import SingleSendService
+        from apps.sms.service import SmsService
+
+        send_data = request.data
+        send_data['status'] = 'scheduled'
+        sms_service = SmsService()
+        print(send_data)
+        sms = sms_service.create_sms(send_data, request.user)
+        sms_id = str(sms.id)
+        
+
+        try:
+            SingleSendService().validate_and_send(sms_id=sms_id,customer_id=send_data['customer_id'])
+            dispatch_single_sms.delay(sms_id, send_data['customer_id'])
+
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"detail": "Send queued.", "sms_id": str(sms_id)}, status=status.HTTP_202_ACCEPTED) 
+
+
     @action(detail=True, methods=["get"], url_path="estimate-cost")
     def estimate_cost(self, request, pk=None):
         from apps.sms.sending_service import SmsSendingService
