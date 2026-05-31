@@ -16,7 +16,7 @@ django-cors-headers==4.9.0
 django-storages==1.14.6
 djangorestframework==3.17.1
 djangorestframework_simplejwt==5.5.1
-django-celery-beat==2.5.0
+django-celery-beat==2.9.0
 gunicorn==23.0.0
 idna==3.13
 kombu==5.6.2
