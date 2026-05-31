@@ -7,7 +7,14 @@ class AutomationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Automation
         partial_update = True
-        fields = ['id', 'name', 'description','automation_type','sms_body','task_id','status','segment_list_id', 'sms_sender','is_active', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description','automation_type','sms_body','task_id',
+                  'every','period',
+                  'status',
+                  'segment_list_id', 
+                  'sms_sender',
+                  'is_active', 
+                  'created_at', 
+                  'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 class AutomationExecutionSerializer(serializers.ModelSerializer):

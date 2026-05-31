@@ -21,6 +21,8 @@ class Automation(models.Model):
     name = models.CharField(max_length=500)
     automation_type = models.CharField(max_length=50, choices=AUTOMTAION_TYPES)
     task_id = models.CharField(max_length=255, null=True)
+    every = models.IntegerField(null=True)
+    period = models.CharField(max_length=255, null=True)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=False)
     status = models.CharField(choices=AUTOMATION_STATUS, default='created')

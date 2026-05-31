@@ -16,6 +16,8 @@ class AutomationService:
                 description=automation_data['description'],
                 sms_body=automation_data['sms_body'],
                 segment_list_id=automation_data.get('segment_list_id',None),
+                period=automation_data.get('period',None),
+                every=automation_data.get('every',None),
                 sms_sender=automation_data['sms_sender'],
                 user=user
             )
@@ -66,11 +68,24 @@ class AutomationService:
         from django.db import transaction
         from apps.automation.models import Automation
 
+        # Map period strings to IntervalSchedule constants
+        PERIOD_MAP = {
+            'SECONDS': IntervalSchedule.SECONDS,
+            'MINUTES': IntervalSchedule.MINUTES,
+            'HOURS': IntervalSchedule.HOURS,
+            'DAYS': IntervalSchedule.DAYS,
+        }
 
+        automation = Automation.objects.get(id=automation_id)
+        period_value = PERIOD_MAP.get(automation.period)
+        
+        if period_value is None:
+            raise ValueError(f"Invalid period: {automation.period}. Must be one of {list(PERIOD_MAP.keys())}")
+        
         with transaction.atomic():
             schedule, _ = IntervalSchedule.objects.get_or_create(
-                    every=2,
-                    period=IntervalSchedule.MINUTES
+                    every=automation.every,
+                    period=period_value
             )
 
             task, created = PeriodicTask.objects.update_or_create(
@@ -83,7 +98,7 @@ class AutomationService:
                         'kwargs': json.dumps({"sms_body": str(sms_body),"sms_sender":str(sms_sender),"segment_id":str(segment_id),"user_id":str(user_id)})
                     }
             )
-            automation = Automation.objects.get(id=automation_id)
+           
             automation.task_id = task.id
             automation.save()
 
