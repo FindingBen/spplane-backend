@@ -283,6 +283,27 @@ class SmsRecipientService:
         sms_recipient = SmsRecipient.objects.create(**create_data)
 
         return sms_recipient
+    
+    @staticmethod
+    def optout_sms_recipient(recipient_token) -> dict:
+
+        from apps.sms.models import SmsRecipient
+
+        sms_recipient = SmsRecipient.objects.get(access_token=recipient_token)
+        sms_recipient.status='opted_out'
+        sms_recipient.save()
+        
+        # Also update the contact status so they don't appear as subscribed
+        if sms_recipient.contact:
+            sms_recipient.contact.status = 'unsubscribed'
+            sms_recipient.contact.save()
+
+        return {
+            "status":201,
+            "message":"Recipient opted out!"
+        }
+
+
 
     @staticmethod
     def get_all_sms_recipients():

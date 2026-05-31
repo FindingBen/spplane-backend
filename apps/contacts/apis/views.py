@@ -133,6 +133,23 @@ class QRContactViewset(viewsets.ViewSet):
 
         except ValidationError as error:
             return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        
+class SmsOptOutViewset(viewsets.ViewSet):
+    permission_classes = [AllowAny]
 
-        output_serializer = ContactSerializer(contact)
-        return Response(output_serializer.data, status=status.HTTP_201_CREATED)
+    @action(detail=False, methods=['get'], url_path='unsubscribe')
+    def unsubscribe(self, request):
+        from apps.sms.service import SmsRecipientService
+        token = request.query_params.get('t')
+        print('TOKEN',token)
+        if not token:
+            return Response({'error': 'Token required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            service = SmsRecipientService()
+            service.optout_sms_recipient(token)
+            return Response({'detail': 'Unsubscribed'}, status=status.HTTP_200_OK)
+        except ValidationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_404_NOT_FOUND)
+
+        
