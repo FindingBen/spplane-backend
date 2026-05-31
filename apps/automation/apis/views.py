@@ -17,8 +17,23 @@ class AutomationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return AutomationService.get_automations_for_user(self.request.user)
 
+    def update(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            automation = AutomationService.update_automation(
+                automation_id=kwargs['pk'],
+                automation_data=serializer.validated_data,
+                user=request.user
+            )
+            return Response(self.get_serializer(automation).data, status=status.HTTP_200_OK)
+        except ValidationError as error:
+            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as error:
+            return Response({'error': str(error)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
     def create(self, request, *args, **kwargs):
-        print(request.data)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 

@@ -3,3 +3,6 @@ class SmsNotFound(BaseException):
 
 class ContactNotFound(BaseException):
     """Contact not found"""
+
+class ContactListNotFound(BaseException):
+    """Contact not found"""

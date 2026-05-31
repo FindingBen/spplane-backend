@@ -335,6 +335,8 @@ class SmsSendingService:
 
     # --- Public entry points ------------------------------------------------
 
+    # def validate_reocurrent_dispatch(self,)
+
     def validate_and_dispatch(self, sms_id: str) -> dict:
         """
         Main entry point called by the API view or a scheduled-send task.

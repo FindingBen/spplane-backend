@@ -20,6 +20,25 @@ class SmsService:
                 return candidate
 
     @staticmethod
+    def validate_sms_data(sms_body:str, sms_sender:str, segment_id:str, status:None) -> dict:
+        from apps.contacts.models import ContactList
+        from apps.sms.excpections import ContactListNotFound
+
+
+        contact_list = ContactList.objects.get(id=segment_id)
+        if contact_list is None:
+            raise ContactListNotFound("Segment list doesn't exist")
+        
+        sms_data = {
+            "body":sms_body,
+            "sender": sms_sender,
+            "contact_list":contact_list,
+            "status":status
+        }
+
+        return sms_data
+
+    @staticmethod
     def create_sms(sms_data, user=None):
         create_data = {}
         create_data['user'] = user
@@ -474,6 +493,8 @@ class WelcomeSmsService:
                 "message": "Sms dispatched"
             }
         
+class WeeklyOfferSmsService:
+    pass
         
     
         

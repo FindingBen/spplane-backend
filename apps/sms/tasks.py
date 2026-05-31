@@ -6,7 +6,6 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # dispatch_sms_send
 #
@@ -14,6 +13,36 @@ logger = logging.getLogger(__name__)
 # Call this from the API view so the request returns immediately while
 # recipient creation and batch enqueueing happen in a worker process.
 # ---------------------------------------------------------------------------
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def create_and_dispatch_sms(self, sms_body:str, sms_sender:str, segment_id:str,user_id:str) -> dict:
+    from apps.sms.service import SmsService
+    from apps.accounts.models import User
+    from apps.sms.sending_service import SmsSendingService
+
+    try:
+        sms_service = SmsService()
+        sending_service = SmsSendingService()
+        sms_data = sms_service.validate_sms_data(sms_body=sms_body,
+                                                 sms_sender=sms_sender,
+                                                 segment_id=segment_id,
+                                               
+                                                 status='scheduled')
+        user = User.objects.get(id=user_id)
+
+        sms = sms_service.create_sms(sms_data, user)
+        return sending_service.validate_and_dispatch(sms.id)
+    except ValueError as exc:
+        logger.error("dispatch_sms_send: validation error for sms %s: %s", sms.id, exc)
+        _mark_sms_failed(sms.id)
+        raise
+    except Exception as exc:
+        logger.exception("dispatch_sms_send: unexpected error for sms %s", sms.id)
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            _mark_sms_failed(sms.id)
+            raise
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def dispatch_sms_send(self, sms_id: str) -> dict:
@@ -27,8 +56,6 @@ def dispatch_sms_send(self, sms_id: str) -> dict:
         service = SmsSendingService()
         return service.validate_and_dispatch(sms_id)
     except ValueError as exc:
-        # Business-logic errors (wrong status, no contacts, etc.) should not
-        # be retried — they require a human to fix the data first.
         logger.error("dispatch_sms_send: validation error for sms %s: %s", sms_id, exc)
         _mark_sms_failed(sms_id)
         raise
@@ -502,4 +529,3 @@ def send_single_sms(self, sms_id: str, customer_id:str) -> None:
             )
 
     return {"sent": sent_count, "failed": failed_count}
-

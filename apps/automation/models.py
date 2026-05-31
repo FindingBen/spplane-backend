@@ -5,16 +5,25 @@ from django.db import models
 class Automation(models.Model):
     AUTOMTAION_TYPES =[
         ('welcome_user', 'Welcome sms'),
-        ('weekly_offer', 'Weekly offer sms'),
+        ('recurring', 'Recurring sms'),
+    ]
+
+    AUTOMATION_STATUS = [
+        ('created','Created'),
+        ('activated','Activated'),
+        ('deactivated','Deactivated')
     ]
 
     user = models.ForeignKey('accounts.User', on_delete=models.CASCADE)
     sms_body = models.CharField(max_length=255, null=True)
     sms_sender = models.CharField(max_length=255, null=True)
+    segment_list_id = models.CharField(max_length=255, null=True)
     name = models.CharField(max_length=500)
     automation_type = models.CharField(max_length=50, choices=AUTOMTAION_TYPES)
+    task_id = models.CharField(max_length=255, null=True)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=False)
+    status = models.CharField(choices=AUTOMATION_STATUS, default='created')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

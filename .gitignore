@@ -3,6 +3,7 @@
 start_celery.bat
 start_migration.bat
 start_server.bat
+start_celery_beat.bat
 register_shopify_webhook.bat
 scaffold_api.py
 
