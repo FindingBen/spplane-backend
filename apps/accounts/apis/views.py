@@ -6,6 +6,7 @@ from django.shortcuts import redirect
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from .serializers import RegisterSerializer, CustomTokenSerializer, build_user_payload
 from apps.accounts.models import EmailVerification
@@ -41,6 +42,14 @@ class GetUserInfoView(APIView):
     def get(self, request):
         user = request.user
         return Response(build_user_payload(user), status=200)
+    
+class GetStatisticNumbersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        account_service = AccountService()
+        statistic_data = account_service.return_statistic_numbers(request.user)
+        return Response({"message": "Data retrieved!", "data": statistic_data}, status=200)
 
 
 class LoginView(TokenObtainPairView):

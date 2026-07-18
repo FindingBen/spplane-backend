@@ -8,6 +8,10 @@ from django.db import transaction
 
 
 class AccountService:
+    from apps.sms.models import Sms
+    from apps.campaign.models import Campaign
+    from apps.contacts.models import Contact
+
     @staticmethod
     @transaction.atomic
     def register_user(email, password, user_type):
@@ -35,6 +39,20 @@ class AccountService:
         send_new_user_notification_email_task.delay(user.email, user.user_type, "direct")
 
         return user
+    
+    @staticmethod
+    def return_statistic_numbers(user):
+
+        response = {}
+        active_campaigns = AccountService.Campaign.objects.filter(user=user,status='active')
+        sent_sms = AccountService.Sms.objects.filter(user=user,status='sent')
+        contacts = AccountService.Contact.objects.filter(users=user)
+
+        response['active_campaigns'] = active_campaigns.count()
+        response['sms_sent'] = sent_sms.count()
+        response['contacts'] = contacts.count()
+
+        return response
     
 class EmailVerificationService:
     @staticmethod

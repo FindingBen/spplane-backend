@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    RegisterView, LoginView, VerifyEmailView, GetUserInfoView, WallerViewset,
+    RegisterView, LoginView, VerifyEmailView, GetUserInfoView, WallerViewset,GetStatisticNumbersView,
     ShopifyOAuthInitView, ShopifyOAuthCallbackView, ShopifyAuthLookupView,
     ShopifyCompleteSetupView,
 )
@@ -12,8 +12,8 @@ urlpatterns = [
     path("login/", LoginView.as_view()),
     path("token/refresh/", TokenRefreshView.as_view()),
     path("me/", GetUserInfoView.as_view()),
+    path("me/statistic-numbers/", GetStatisticNumbersView.as_view()),
     path("wallet/", WallerViewset.as_view()),
-
     # Shopify OAuth
     path("shopify/oauth/", ShopifyOAuthInitView.as_view()),
     path("shopify/callback/", ShopifyOAuthCallbackView.as_view()),

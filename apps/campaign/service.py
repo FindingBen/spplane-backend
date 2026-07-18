@@ -28,6 +28,11 @@ class CampaignService:
         :return: QuerySet of Campaign instances
         """
         return Campaign.objects.filter(user=user)
+    
+    @staticmethod
+    def get_campaigns_numbers(user):
+        active = Campaign.objects.filter(user=user, status='active')
+        
 
     @staticmethod
     def update_campaign(campaign, campaign_data, user):
