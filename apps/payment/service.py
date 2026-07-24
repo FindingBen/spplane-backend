@@ -472,6 +472,25 @@ class PaymentOrderService:
                     external_event_id=external_event_id,
                 )
 
+            eligibility = PaymentEligibilityService.evaluate_merchant_profile(shopify_profile)
+            if not eligibility.is_allowed:
+                payment_order.status = PaymentOrder.Status.DECLINED
+                payment_order.failure_reason = f'Merchant ineligible at settlement: {eligibility.reason}'
+                payment_order.save(update_fields=['status', 'failure_reason', 'updated_at'])
+                return PaymentOrderService._finalize_webhook_event(
+                    webhook_event,
+                    {
+                        'status': 'declined',
+                        'reason': eligibility.reason,
+                        'eligibility_code': eligibility.code,
+                        'provider_charge_id': provider_charge_id,
+                        'payment_order_id': str(payment_order.id),
+                    },
+                    payload=payload,
+                    topic=topic,
+                    external_event_id=external_event_id,
+                )
+
             now_value = timezone.now()
             top_up_amount = PaymentOrderService.get_credit_amount(payment_order)
             top_up_result = WalletTransactionService.top_up_wallet(
