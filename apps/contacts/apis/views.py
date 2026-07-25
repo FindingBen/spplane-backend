@@ -73,7 +73,11 @@ class ContactViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return ContactService.get_all_contacts(self.request.user)
+        queryset = ContactService.get_all_contacts(self.request.user)
+        segment_id = self.request.query_params.get('segment_id')
+        if segment_id is not None:
+            queryset = queryset.filter(segment_memberships__contact_list_id=segment_id)
+        return queryset
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

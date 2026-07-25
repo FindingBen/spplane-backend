@@ -172,6 +172,7 @@ class ContactService:
     @staticmethod
     def get_all_contacts(user=None):
         queryset = Contact.objects.all().prefetch_related('segment_memberships__contact_list')
+        print('is it hitting!!!',queryset)
         if user is not None:
             queryset = queryset.filter(users=user)
         return queryset
