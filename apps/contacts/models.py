@@ -25,7 +25,10 @@ class Contact(models.Model):
         ('import', 'Import'),
         ('shopify', 'Shopify'),
         ('api', 'API'),
-        ('keyword', 'Keyword Opt-In'),    # e.g. texted JOIN to your number
+        ('keyword', 'Keyword Opt-In'),
+        ('qr', 'Keyword Opt-In'),
+        ('qr_code','QR')
+
     ]
 
     unique_id = models.UUIDField(default=uuid4, unique=True, editable=False)
