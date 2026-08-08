@@ -420,6 +420,7 @@ class VonageDeliveryWebhookView(APIView):
         from apps.sms.models import SmsRecipient, SmsEvent
 
         payload = request.data
+        logger.info("VonageDeliveryWebhook: received payload — %s", payload)
         message_uuid = payload.get("message_uuid")
         vonage_status = payload.get("status")
 
@@ -430,7 +431,7 @@ class VonageDeliveryWebhookView(APIView):
         internal_status = _VONAGE_STATUS_MAP.get(vonage_status)
         if internal_status is None:
             # Unknown / intermediate status — acknowledge and ignore.
-            logger.debug("VonageDeliveryWebhook: unhandled status '%s' for %s", vonage_status, message_uuid)
+            logger.info("VonageDeliveryWebhook: unhandled status '%s' for %s", vonage_status, message_uuid)
             return Response(status=status.HTTP_200_OK)
 
         recipient_status, event_type = internal_status
