@@ -1,0 +1,7 @@
+{"type": "sms-landing-page", "blocks": [
+    {"type": "text", 
+    "props": {"text": "Add supporting details, delivery information, or extra context for your offer here.s"}}, 
+    {"type": "cta", 
+    "props": {"link": "https://checkout.shopify.com/", "size": "large", "text": "Buy Nows", "style": "primary", "sticky": true}}],
+    "version": "1", "metadata": {"name": "My Landing Page", "description": "",
+     "smsExclusiveOffer": {"enabled": false, "barLabel": "", "discountPercent": 0}}}

@@ -167,7 +167,6 @@ class SmsPageViewSet(viewsets.ModelViewSet):
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-
 class SmsPageActionViewSet(viewsets.ModelViewSet):
     serializer_class = SmsPageActionSerializer
     permission_classes = [IsAuthenticated]
@@ -371,6 +370,26 @@ class PublicSmsPageView(APIView):
 
         serializer = SmsPublicPageSerializer(page)
         return Response(serializer.data)
+
+    def post(self, request, slug=None):
+        try:
+            block_type = request.data['block_type']
+            token = request.data['token']
+
+            sms_page = SmsPageActionService.update_or_create_page(block_type, token)
+            if sms_page['status'] != 'Success':
+                return Response({'error': sms_page.get('message', 'Unable to record action.')}, status=sms_page['code'])
+
+            sms_event = SmsEventService.update_or_create_sms_event(block_type, token, sms_page['page_action_id'])
+            if sms_event['status'] != 'Success':
+                return Response({'error': sms_event.get('message', 'Unable to record event.')}, status=sms_event['code'])
+
+            return Response({'message': 'Updated!'}, status=status.HTTP_200_OK)
+        except KeyError as e:
+            return Response({'error': f'Missing field: {e}'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # ---------------------------------------------------------------------------
 # Vonage Messages API delivery webhook

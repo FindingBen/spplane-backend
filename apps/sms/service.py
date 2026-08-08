@@ -7,7 +7,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import transaction
-
+from django.utils import timezone
 from apps.sms.models import SmsEvent, SmsRecipient, SmsPageAction, SmsPage, Sms, QrCode
 
 
@@ -177,6 +177,11 @@ class SmsPageService:
             SmsPageAction.objects.bulk_create(actions)
         return page
 
+
+
+
+
+
 class SmsPageActionService:
     @staticmethod
     def create_sms_page_action(sms_page_action_data, user=None):
@@ -209,6 +214,53 @@ class SmsPageActionService:
         sms_page_action = SmsPageAction.objects.create(**create_data)
 
         return sms_page_action
+
+    @staticmethod
+    def update_or_create_page(block_type:str, token:str) -> dict:
+        response = {}
+
+        # maps the public page block that was interacted with to its SmsPageAction fields
+        BLOCK_TYPE_ACTIONS = {
+            'cta': {'action_type': 'click', 'action_key': 'Click', 'label': 'Click'},
+            'video-hero': {'action_type': 'video', 'action_key': 'Video', 'label': 'Video'},
+            'carousel': {'action_type': 'click', 'action_key': 'Carousel', 'label': 'Carousel view'},
+        }
+
+        event_data = BLOCK_TYPE_ACTIONS.get(block_type)
+        if event_data is None:
+            response['status'] = 'Error'
+            response['code'] = 400
+            response['message'] = f"Unknown block_type '{block_type}'"
+            return response
+
+        recipient = SmsRecipient.objects.filter(access_token=token).first()
+        if recipient is None:
+            response['status'] = 'Error'
+            response['code'] = 404
+            response['message'] = 'Recipient not found'
+            return response
+
+        sms_page = SmsPage.objects.filter(sms=recipient.sms).first()
+        if sms_page is None:
+            response['status'] = 'Error'
+            response['code'] = 404
+            response['message'] = 'Page not found for this recipient'
+            return response
+
+        sms_page_action, created = SmsPageAction.objects.update_or_create(
+            page=sms_page,
+            action_key=event_data['action_key'],
+            defaults={
+                'action_type': event_data['action_type'],
+                'label': event_data['label'],
+            },
+        )
+
+        response['status'] = 'Success'
+        response['code'] = 200
+        response['created'] = created
+        response['page_action_id'] = sms_page_action.id
+        return response
 
     @staticmethod
     def get_all_sms_page_actions():
@@ -371,6 +423,51 @@ class SmsEventService:
         sms_event = SmsEvent.objects.create(**create_data)
 
         return sms_event
+
+    @staticmethod
+    def update_or_create_sms_event(block_type:str, token:str, page_action_id: str) -> dict:
+        response = {}
+
+        # SmsEvent.event_type only allows a fixed set of choices, no 'video'/'carousel' values exist
+        BLOCK_TYPE_EVENTS = {
+            'cta': 'cta_click',
+            'video-hero': 'video_play',
+            'carousel': 'cta_click',
+        }
+
+        event_type = BLOCK_TYPE_EVENTS.get(block_type)
+        if event_type is None:
+            response['status'] = 'Error'
+            response['code'] = 400
+            response['message'] = f"Unknown block_type '{block_type}'"
+            return response
+
+        recipient = SmsRecipient.objects.filter(access_token=token).first()
+        if recipient is None:
+            response['status'] = 'Error'
+            response['code'] = 404
+            response['message'] = 'Recipient not found'
+            return response
+
+        sms_page_action = SmsPageAction.objects.filter(id=page_action_id).first()
+        if sms_page_action is None:
+            response['status'] = 'Error'
+            response['code'] = 404
+            response['message'] = 'Page action not found'
+            return response
+
+        sms_event = SmsEvent.objects.create(
+            sms=recipient.sms,
+            recipient=recipient,
+            page_action=sms_page_action,
+            event_type=event_type,
+            occurred_at=timezone.now(),
+        )
+
+        response['status'] = 'Success'
+        response['code'] = 200
+        response['sms_event_id'] = sms_event.id
+        return response
 
     @staticmethod
     def get_all_sms_events():

@@ -94,7 +94,8 @@ class CampaignService:
     @staticmethod
     def prepare_metrics(sms_object) -> list:
         # action_type choices are lowercase on SmsPageAction ('click', 'custom')
-        metric_type_list = [{'event_type':'cta_click','action_type':'click'},{'event_type':'page_view','action_type':'custom'}]
+        metric_type_list = [{'event_type':'cta_click','action_type':'click'},{'event_type':'page_view','action_type':'custom'},
+                            {'event_type':'Video Plays','action_type':'video'}]
         metric_list = []
         sms_page = SmsPage.objects.filter(sms=sms_object).first()
 
