@@ -369,6 +369,7 @@ class SmsSendingService:
             sms.status = "processing"
             sms.provider = self.PROVIDER_NAME
             sms.save(update_fields=["status", "provider", "updated_at"])
+            self._activate_campaign(sms.campaign_id)
 
         self._enqueue_batches(sms_id, recipient_ids)
 
@@ -512,6 +513,13 @@ class SmsSendingService:
         )
         return [str(rid) for rid in recipient_ids]
 
+    def _activate_campaign(self, campaign_id) -> None:
+        if not campaign_id:
+            return
+        from apps.campaign.models import Campaign
+
+        Campaign.objects.filter(id=campaign_id).exclude(status="active").update(status="active")
+
     def _enqueue_batches(self, sms_id: str, recipient_ids: list[str]) -> None:
         """
         Dispatches recipient IDs as parallel Celery batch tasks.
@@ -573,6 +581,10 @@ class SingleSendService:
             sms.status = "processing"
             sms.provider = self.PROVIDER_NAME
             sms.save(update_fields=["status", "provider", "updated_at"])
+            if sms.campaign_id:
+                from apps.campaign.models import Campaign
+
+                Campaign.objects.filter(id=sms.campaign_id).exclude(status="active").update(status="active")
 
         self.enqueue_send(sms_id=sms_id, customer_id=customer_id)
 
