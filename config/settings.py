@@ -109,6 +109,7 @@ INSTALLED_APPS = [
     'django_celery_beat',
     
     "apps.accounts.apps.AccountsConfig",
+    "apps.analytics.apps.AnalyticsConfig",
     "apps.contacts.apps.ContactsConfig",
     "apps.content.apps.ContentConfig",
     "apps.campaign.apps.CampaignConfig",

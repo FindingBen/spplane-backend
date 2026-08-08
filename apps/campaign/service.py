@@ -1,6 +1,9 @@
 from django.core.exceptions import ValidationError
 from apps.campaign.models import Campaign
+from apps.sms.models import Sms, SmsEvent, SmsPage, SmsPageAction, SmsRecipient
 
+
+EVENT_TYPES = ['queued','sent','delivered','failed']
 
 class CampaignService:
     @staticmethod
@@ -28,10 +31,6 @@ class CampaignService:
         :return: QuerySet of Campaign instances
         """
         return Campaign.objects.filter(user=user)
-    
-    @staticmethod
-    def get_campaigns_numbers(user):
-        active = Campaign.objects.filter(user=user, status='active')
         
 
     @staticmethod
@@ -67,3 +66,49 @@ class CampaignService:
             raise ValidationError("You don't have permission to delete this campaign.")
         
         campaign.delete()
+
+    @staticmethod
+    def get_campaign_analytics(user):
+        """Gets analytic for specified campaign"""
+        response = {}
+        latest_campaign = Campaign.objects.filter(user=user, status='active').order_by('-created_at').first()
+        if latest_campaign is None:
+            response['error'] = 'No active campaign'
+            return response
+
+        sms_object = Sms.objects.filter(campaign=latest_campaign, status='sent').first()
+        if sms_object is None:
+            response['error'] = 'No Sms tied to this campaign'
+            return response
+
+        expected_delivery_volume = SmsRecipient.objects.filter(sms=sms_object).count()
+        actual_delivery_volume = SmsRecipient.objects.filter(sms=sms_object, status='delivered').count()
+        metrics = CampaignService.prepare_metrics(sms_object)
+        response['name'] = latest_campaign.name or 'Default'
+        response['metrics'] = metrics
+        response['total_recipients'] = expected_delivery_volume
+        response['delivered'] = actual_delivery_volume
+
+        return response
+
+    @staticmethod
+    def prepare_metrics(sms_object) -> list:
+        # action_type choices are lowercase on SmsPageAction ('click', 'custom')
+        metric_type_list = [{'event_type':'cta_click','action_type':'click'},{'event_type':'page_view','action_type':'custom'}]
+        metric_list = []
+        sms_page = SmsPage.objects.filter(sms=sms_object).first()
+
+        for metric in metric_type_list:
+            metric_events = SmsEvent.objects.filter(sms=sms_object, event_type=metric['event_type'])
+            page_action = None
+            if sms_page is not None:
+                page_action = SmsPageAction.objects.filter(page=sms_page, action_type=metric['action_type']).first()
+
+            metric_object = {
+                'label': page_action.label if page_action else metric['event_type'],
+                'value': metric_events.count(),
+            }
+            metric_list.append(metric_object)
+
+        return metric_list
+

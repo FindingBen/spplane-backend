@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from .serializers import CampaignSerializer
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from django.core.exceptions import ValidationError
 from apps.campaign.service import CampaignService
 
@@ -32,5 +33,13 @@ class CampaignViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         try:
             CampaignService.delete_campaign(instance, self.request.user)
+        except ValidationError as e:
+            return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)
+
+    @action(detail=False, methods=['get'], url_path='get_campaign_analytics')
+    def campaign_analytics(self, request):
+        try:
+            campaign_analytics_data = CampaignService.get_campaign_analytics(user=request.user)
+            return Response({"data":campaign_analytics_data},status=status.HTTP_200_OK)
         except ValidationError as e:
             return Response({'error': str(e)}, status=status.HTTP_403_FORBIDDEN)

@@ -116,6 +116,7 @@ class SmsPageAction(models.Model):
             ("form_submit", "Form Submit"),
             ("video", "Video"),
             ("custom", "Custom"),
+            ("click", "Click"),
         ],
     )
 

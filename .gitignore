@@ -7,6 +7,8 @@ start_celery_beat.bat
 register_shopify_webhook.bat
 scaffold_api.py
 
+SMS_ANALYTICS_SUGGESTIONS.md
+
 package.json
 shopify.app.toml
 
