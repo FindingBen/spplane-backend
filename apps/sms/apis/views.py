@@ -418,7 +418,7 @@ class VonageDeliveryWebhookView(APIView):
 
     def post(self, request):
         from apps.sms.models import SmsRecipient, SmsEvent
-
+        print('HITTING API')
         payload = request.data
         logger.info("VonageDeliveryWebhook: received payload — %s", payload)
         message_uuid = payload.get("message_uuid")
