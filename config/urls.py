@@ -22,7 +22,6 @@ urlpatterns = [
     path('api/contacts/', include('apps.contacts.apis.urls')),
     path('api/sms/', include('apps.sms.apis.urls')),
     path('api/automations/', include('apps.automation.apis.urls')),
-    path('sms/delivery', VonageDeliveryWebhookView.as_view(), name='vonage_delivery_webhook'),
 
     # Legacy Shopify Partner dashboard URLs (keep until dashboard is updated)
     path('api/oAuth-login', ShopifyOAuthInitView.as_view(), name='shopify_oauth_legacy'),

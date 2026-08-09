@@ -1,4 +1,4 @@
-from .views import SmsEventViewSet,SmsPageActionViewSet,SmsViewSet,PublicSmsPageView,SmsRecipientViewSet,SmsPageViewSet,QrCodeViewset
+from .views import SmsEventViewSet,SmsPageActionViewSet,SmsViewSet,VonageDeliveryWebhookView,PublicSmsPageView,SmsRecipientViewSet,SmsPageViewSet,QrCodeViewset
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 router = DefaultRouter()
@@ -17,4 +17,5 @@ urlpatterns = [
     path('', include(router.urls)),
     path('sms-page-signup/', QrCodeViewset.as_view(), name='sms_page_signup'),
     path('public/page/<slug:slug>/', PublicSmsPageView.as_view(), name='sms_public_page'),
+    path('delivery', VonageDeliveryWebhookView.as_view(), name='vonage_delivery_webhook'),
 ]
