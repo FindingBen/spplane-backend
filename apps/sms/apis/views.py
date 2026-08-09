@@ -393,7 +393,7 @@ class PublicSmsPageView(APIView):
 
 # ---------------------------------------------------------------------------
 # Vonage Messages API delivery webhook
-# POST /sms/delivery
+# POST /api/sms/delivery
 # ---------------------------------------------------------------------------
 
 # Maps Vonage Messages API DLR statuses to our internal SmsRecipient statuses
@@ -415,6 +415,8 @@ class VonageDeliveryWebhookView(APIView):
     logged instead of surfaced.
     """
     permission_classes = [AllowAny]
+    # Vonage's own Bearer JWT would otherwise be parsed (and rejected) by our JWTAuthentication.
+    authentication_classes = []
 
     def post(self, request):
         from apps.sms.models import SmsRecipient, SmsEvent
