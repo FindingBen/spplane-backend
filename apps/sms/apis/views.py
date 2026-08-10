@@ -102,7 +102,6 @@ class SmsViewSet(viewsets.ModelViewSet):
         
 
         try:
-            SingleSendService().validate_and_send(sms_id=sms_id,customer_id=send_data['customer_id'])
             dispatch_single_sms.delay(sms_id, send_data['customer_id'])
 
         except ValueError as exc:
