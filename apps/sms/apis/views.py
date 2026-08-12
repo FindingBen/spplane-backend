@@ -1,7 +1,7 @@
 import logging
 
 from .serializers import SmsEventSerializer,SmsSerializer,SmsPageSerializer,SmsPublicPageSerializer,SmsRecipientSerializer,SmsPageActionSerializer,QRCodeSerializer
-from apps.sms.service import SmsPageActionService,SmsService,SmsEventService,SmsRecipientService,SmsPageService, QrCodeService
+from apps.sms.service import SmsPageActionService,SmsService,SmsEventService,SmsRecipientService,SmsPageService, QrCodeService, SmsAnalyticService
 from django.core.exceptions import ValidationError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -128,7 +128,15 @@ class SmsViewSet(viewsets.ModelViewSet):
 
         return Response(estimate, status=status.HTTP_200_OK)
 
-
+    @action(detail=True, methods=['get'], url_path='overall-sms-analytics')
+    def sms_overall_analytics(self, request, pk=None):
+        try:
+            service = SmsAnalyticService()
+            analytics_data = service.overall_analytics_calculation(user=request.user)
+            return Response({"data":analytics_data},status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"message":str(e)},status=status.HTTP_400_BAD_REQUEST)
+        
 class SmsPageViewSet(viewsets.ModelViewSet):
     serializer_class = SmsPageSerializer
     permission_classes = [IsAuthenticated]

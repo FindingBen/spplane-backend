@@ -1,6 +1,5 @@
 import uuid
 from io import BytesIO
-
 import qrcode
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -9,7 +8,7 @@ from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils import timezone
 from apps.sms.models import SmsEvent, SmsRecipient, SmsPageAction, SmsPage, Sms, QrCode
-
+from apps.accounts.models import User
 
 class SmsService:
     @staticmethod
@@ -495,6 +494,43 @@ class SmsEventService:
     @staticmethod
     def delete_sms_event(sms_event, user=None):
         sms_event.delete()
+
+class SmsAnalyticService:
+    @staticmethod
+    def overall_analytics_calculation(user:User) -> dict:
+        """Sms analytics overall"""
+        response = {}
+        sms_objects = Sms.objects.filter(user=user)
+        sms_scheduled = Sms.objects.filter(user=user, status='scheduled').count()
+        sms_failed = Sms.objects.filter(user=user, status='failed').count()
+        sms_sent = Sms.objects.filter(user=user, status='sent')
+        sms_delivered = 0
+
+        clicks = 0
+        video_plays = 0
+        views = 0
+
+        for sms_object in sms_objects:
+
+            page_obj = SmsPage.objects.get(sms=sms_object)
+
+            clicks += SmsPageAction.objects.filter(page=page_obj,action_type='click').count()
+            video_plays += SmsPageAction.objects.filter(page=page_obj,action_type='video').count()
+            views += SmsPageAction.objects.filter(page=page_obj,action_type='custom').count()
+            sms_delivered += SmsRecipient.objects.filter(sms=sms_object,status='delivered').count()
+
+        response['delivered'] = sms_delivered
+        response['scheduled'] = sms_scheduled
+        response['failed'] = sms_failed
+        response['sent'] = sms_sent
+        response['metrics']['clicks'] = clicks
+        response['metrics']['video_plays'] = video_plays
+        response['metrics']['views'] = views
+
+        return response
+
+
+
 
 class QrCodeService:
     @staticmethod
